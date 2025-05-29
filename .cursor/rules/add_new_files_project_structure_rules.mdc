@@ -1,0 +1,115 @@
+Below is one possible “tree‐view” of the new, minimal project structure built on top of the Next.js SaaS Starter Template. This structure preserves the working authentication, payment, and Supabase integrations while adding new files and folders to support the Hadith Narrator Checker MVP tasks:
+
+──────────────────────────────
+Project Root
+──────────────────────────────
+app/
+├── app/                             ← Authenticated app pages (using App Router)
+│   ├── page.tsx                     ← Updated overall homepage – includes:
+│   │                                  • Top Header (imported from components/app/Header.tsx)
+│   │                                  • Central hadith search input with “Check” button
+│   │                                  • Placeholder container for “Recent Searches” (using components/app/RecentSearches.tsx)
+│   │                                  • Area to render narrator list (using components/app/NarratorList.tsx)
+│   │                                  • Local state slices for hadithInput, narrators, and selectedNarrator
+│   │
+│   └── [other pages…]               ← (Future grouping such as “settings/” if needed)
+│
+├── actions/                         ← Server actions for data mutations and form handling
+│   ├── auth.ts                      ← (Existing auth actions)
+│   ├── stripe.ts                    ← (Existing Stripe actions)
+│   └── hadith.ts                    ← NEW: Server action to process hadith text,
+│                                      perform canonical lookup (via “hadith-api”) and isnād extraction
+│
+├── api/                             ← API routes for external service integrations
+│   ├── auth/                        ← (Existing auth API endpoints)
+│   ├── (payment)/                   ← (Existing Stripe payment endpoints)
+│   ├── profile/                     ← (Existing) user profile endpoints
+│   └── webhook/                     ← (Existing) Stripe and other webhook handlers
+│
+├── success/                         ← Success pages (e.g., post-payment)
+│ 
+components/                         
+├── app/                             ← App-specific components
+│   ├── Header.tsx                   ← (Updated Header component using shadcn/ui and Tailwind classes: bg-primary, text-primary-foreground)
+│   ├── NarratorProfile.tsx          ← NEW: Component showing detailed narrator info in a modal/drawer;
+│   │                                  • Contains header, Tabs (Biography, Opinions, Source References), and bookmark/share actions
+│   ├── NarratorList.tsx             ← NEW: Component rendering the ordered list of narrator cards (using shadcn/ui Card/List components)
+│   └── RecentSearches.tsx           ← NEW: Component for rendering the “Recent Searches” carousel for authenticated users
+│
+├── email/                           ← (Existing email templates)
+├── stripe/                          ← (Existing Stripe integration components)
+├── ui/                              ← Base UI components (buttons, inputs, primitives from shadcn/ui)
+│   └── [shadcn/ui primitives…]
+├── user/                           ← (Existing user-related components: sign in/out, etc.)
+│
+lib/                                 ← Core libraries and app configuration (kept as is)
+├── hooks/
+├── auth.config.ts
+├── auth.ts
+├── authSendRequest.ts
+├── mail.ts
+└── utils.ts
+│
+types/                               ← TypeScript type definitions
+├── database.types.ts
+└── next-auth.d.ts
+│
+utils/                               ← Utility functions and API clients
+├── supabase/
+│   ├── client.ts
+│   ├── front.ts
+│   ├── server.ts
+│   └── user.ts
+└── stripe.ts
+│
+supabase/                            ← Supabase configuration
+└── config.toml
+│
+public/                              ← Static assets (images, fonts, etc.)
+│
+.env.local                           ← Environment variables
+config.ts                            ← App configuration
+middleware.ts                        ← Next.js middleware for auth and routing 
+[config files]                       ← next.config.ts, tailwind.config.ts, etc.
+──────────────────────────────
+Notes on the New Additions:
+──────────────────────────────
+1. app/app/page.tsx (Updated Home Page)
+   • Implements the global layout—a top Header, a responsive central container with a hadith search form and “Check” button.
+   • Uses React.useState to manage:
+       – hadithInput (string)
+       – narrators (array from hadith processing)
+       – selectedNarrator (object for opening the NarratorProfile)
+   • Integrates components:
+       – Header.tsx (for consistent navigation)
+       – RecentSearches.tsx (conference “Recent Searches” carousel)
+       – NarratorList.tsx (to map and render the narrator cards)
+       
+2. app/actions/hadith.ts
+   • Creates a server action that validates and normalizes the submitted hadith text.
+   • Calls external libraries (“hadith-api” and “isnad-parser”) to:
+       – Retrieve the matching hadith details
+       – Extract an ordered list of narrators (isnād)
+   • Returns an object with the canonical hadith info and narrator reference array.
+
+3. components/app/NarratorProfile.tsx
+   • Displays detailed narrator info in a modal/drawer overlay.
+   • Uses shadcn/ui Tabs for switching between “Biography”, “Opinions”, and “Source References.”
+   • Includes bookmark and share functionality; state is updated immediately upon user interaction.
+   • Fetches additional narrator metadata from Supabase via the existing utilities.
+
+4. components/app/NarratorList.tsx
+   • Renders a list of narrator cards using shadcn/ui components.
+   • Each card displays the narrator’s Arabic name, transliteration, and a credibility badge.
+   • Cards are clickable to open the NarratorProfile panel (see Task 5).
+
+5. components/app/RecentSearches.tsx
+   • Displays a horizontal scroll “Recent Searches” carousel.
+   • Initially empty, but later populated with the latest 10 hadith searches from Supabase.
+   • Tailwind classes (e.g., bg-primary, text-primary-foreground) ensure cohesive styling.
+
+6. Authentication, Payment, & Database integrations remain unchanged, ensuring that:
+   • Protected routes, sign in/out, and middleware from the starter continue to work.
+   • Existing utilities (lib and utils folders) work seamlessly with the new Hadith and Narrator features.
+──────────────────────────────
+This simple, yet organized structure ensures that the new MVP features—the hadith search, isnād extraction, narrator listing, detailed profile, and related user interactions (bookmarking and search history)—are cleanly separated into components, server actions, and pages. The new files follow the Next.js SaaS Starter Template conventions while leveraging shadcn/ui components and Tailwind styling as specified in your detailed task breakdown.

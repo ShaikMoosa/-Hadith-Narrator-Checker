@@ -1,0 +1,185 @@
+Below is a comprehensive task breakdown that covers the full MVP feature set. Each task is scoped with a clear user story, UI details, user flows, and data/state points. Note that the very first task is setting up the overall layout (core UI) in app/app/page.tsx as required. Each step uses shadcn/ui components with Tailwind CSS class names (e.g., bg-primary, text-primary-foreground) and leverages the Next.js SaaS Starter structure.
+
+──────────────────────────────
+Task 1: Build Overall App Layout & Core UI Shell
+
+• User Story:
+  – As a user, I want a consistent, fully styled application layout so I can easily navigate and access features.
+
+• Details & Flow:
+  - Update app/app/page.tsx to serve as the authenticated homepage.
+  - Import and use the Header component (from components/app) that’s already added in app/layout.tsx. Revise its style to use the shadcn/ui styling and Tailwind classes (e.g., use bg-primary and text-primary-foreground) to match the overall app theme.
+  - Create a layout shell (e.g., sidebar or top navigation region) that will later accommodate components such as the search input, results list, and profile panels.
+  - Set up a wrapper that ensures responsiveness and consistent padding/margins.
+  - Ensure that placeholder areas are clearly defined for the “Hadith-Text Search” form and the “Narrator Details” sections without using any placeholder third‐party components (e.g., map placeholders).
+
+• UI Details & Data Points:
+  - Layout file: app/app/page.tsx
+  - Contains top Header (updated style).
+  - Central container with a vertically centered area that will later house the hadith search input.
+  - Define state slices for future search input and dynamic narrator list (even if empty at first).
+  - Use shadcn/ui primitives (for boxes, containers, and headings) imported from '@/components/ui'.
+
+──────────────────────────────
+Task 2: Implement Homepage Hadith Search Input
+
+• User Story:
+  – As a user, I want to paste or type a hadith in a central input field so the system can process it.
+
+• Details & Flow:
+  - On the homepage (app/app/page.tsx), add a central search component designed using shadcn/ui components.
+  - Include a large textarea/input field with the placeholder “Paste hadith here…” and a primary “Check” button right underneath.
+  - Bind the “Enter” key (and click) to trigger search processing.
+  - Set local component state (using React.useState) to hold the input text.
+  - Add a “Recent Searches” carousel component below the search input. For now, it is empty but structured to accept data (later populated from the authenticated user’s search history).
+
+• UI Details & Data Points:
+  - UI component: A form with input (type = text/textarea) and a Button (primary style).
+  - Tailwind classes: Ensure use of bg-primary and text-primary-foreground (consistent with Task 1).
+  - Data points managed:
+      • hadithInput: string
+      • onSubmit: function to call search logic (calls server action later)
+
+──────────────────────────────
+Task 3: Integrate Backend Hadith Identification & Isnād Parsing
+
+• User Story:
+  – As a user, upon submitting a hadith text, I want the system to identify the matching canonical hadith from collections and extract the isnād (chain of narrators).
+
+• Details & Flow:
+  - Create a server action (e.g., in app/actions/hadith.ts) that accepts the hadith text and then:
+      • Uses the “hadith-api” library to find a matching hadith from verified collections.
+      • Calls the “isnad-parser” library to extract the chain of narrators.
+  - Write proper input validation and normalization (possibly with Camel Tools for Arabic text preprocessing).
+  - Return a structured object that contains:
+      • Matched hadith details (ID, original text, source, chapter, etc.)
+      • Ordered list/array of narrator IDs or names for further processing.
+
+• Data Points:
+  - Request data: hadith text (string)
+  - Response data includes identifiers and an ordered array of narrator references.
+  - No UI yet but tie this to the search input (onSubmit) in Task 2.
+
+──────────────────────────────
+Task 4: Build Narrator Extraction & Listing UI
+
+• User Story:
+  – As a user, after performing a search, I want to see an ordered list of narrators extracted from my submitted hadith.
+
+• Details & Flow:
+  - After the hadith identification request (from Task 3) returns, display the ordered list within the search results area.
+  - Mapping over the returned array of narrators, render a list component (e.g., a Card or List from shadcn/ui) for each narrator.
+  - Each narrator card should display at least the name (both Arabic and transliteration, if available) along with a quick credibility indicator (e.g., an icon for “Trustworthy” or “Weak”).
+  - Each list item is clickable; clicking it will trigger the opening of a detailed narrator profile panel (Task 5).
+
+• UI Details & Data Points:
+  - Use a shadcn/ui List or Card component.
+  - Each card shows:
+      • narratorName (string, with two language versions)
+      • credibility summary badge (icon + label)
+  - State:
+      • narrators: array from the hadith parsing result.
+      • Selected narrator value to drive the profile display.
+
+──────────────────────────────
+Task 5: Implement Narrator Profile Panel
+
+• User Story:
+  – As a user, I want to tap on a narrator’s name and immediately see their detailed profile with full biography, credibility badge, and a summary explanation.
+
+• Details & Flow:
+  - Create a NarratorProfile component (e.g., in components/app/NarratorProfile.tsx).
+  - When a narrator is clicked from the list (Task 4), display the profile panel as a sliding drawer or modal overlay (using shadcn/ui modal or drawer component).
+  - Within the profile panel, include:
+      ○ Header: Display the narrator’s full name (in Arabic and transliteration) plus a prominent credibility badge (“Trustworthy” or “Weak” styled with appropriate colors).
+      ○ Tab header with three sections: Biography, Opinions, and Source References.
+          ▪ Biography: Displays biographical data (birth/death, region, teachers, students, and a text biography).
+          ▪ Opinions: A sortable list displaying scholarly opinions including scholar name, verdict, and brief explanation.
+          ▪ Source References: A list of citations with source details (e.g., Ṣaḥīḥ al-Bukhārī 1:45), each clickable to reference pages.
+      ○ Sidebar elements: A Bookmark button which allows logged-in users to mark the narrator; a share link that copies the profile URL.
+  - Fetch additional narrator metadata from the Supabase backend (using utils/supabase/user.ts and dedicated endpoints) based on the narrator’s unique ID.
+
+• UI Details & Data Points:
+  - State:
+      • selectedNarrator: object containing full details.
+      • activeTab: string (Biography | Opinions | Source References)
+  - Data:
+      • biography details: birth_year, death_year, region, etc.
+      • scholarly opinions: array of objects with (scholar, verdict, reason, source_ref).
+  - Use shadcn/ui Tabs, Modal/Drawer, and Button components.
+
+──────────────────────────────
+Task 6: Add Scholarly Opinions & Source References Integration
+
+• User Story:
+  – As a user, I want to sort and review detailed scholarly opinions and view source references for each narrator.
+
+• Details & Flow:
+  - Extend the NarratorProfile panel (from Task 5) to include a detailed Opinions tab.
+  - Render a sortable list/table showing:
+      ○ Scholar name
+      ○ Verdict (styled badges for “Trustworthy” vs. “Weak”)
+      ○ Explanation/reason text (e.g., “Ibn Hibban criticized him for…”)
+      ○ A clickable source reference that may navigate to a detailed view or external resource.
+  - Implement client-side sorting (e.g., sort by scholar name or verdict) directly using React state.
+  - Ensure each item renders using shadcn/ui list or table components.
+
+• UI Details & Data Points:
+  - Opinions data: fetched from Supabase (opinions table), keyed by narrator_id.
+  - Sorting: local state management (active sort criteria).
+  - Use Tailwind styling (e.g., text-primary-foreground for text and bg-primary for badges).
+
+──────────────────────────────
+Task 7: Implement Bookmarking & Search History Features
+
+• User Story:
+  – As a registered user, I want to bookmark narrators and review my last 10 hadith searches via a personal dashboard.
+
+• Details & Flow:
+  - Bookmarking:
+      ○ In the NarratorProfile panel, implement a Bookmark button.
+      ○ When clicked, save a bookmark entry to the Supabase bookmarks table (via a server action in app/actions/hadith.ts or a new action file).
+      ○ Reflect the bookmarked state immediately in the UI.
+  - Search History:
+      ○ In the Home/Search view (Task 2), if the user is authenticated, query the latest 10 searches from Supabase (table: search_history).
+      ○ Render these as a “Recent Searches” carousel below the main search input using a horizontal scroll list designed with shadcn/ui components.
+  - For both features, ensure that state is reflected immediately and that the UI shows success feedback (e.g., toast notifications).
+
+• UI Details & Data Points:
+  - Bookmark button: toggles state (bookmarked/unbookmarked) and reflects via an icon change (use Lucide React icons).
+  - Search history list: displays query_text and a timestamp.
+  - Data points:
+      • For bookmarks: user_id, narrator_id, created_at.
+      • For search history: id, user_id, query_text, result_found, searched_at.
+
+──────────────────────────────
+Task 8: Final Integration & Polish
+
+• User Story:
+  – As a stakeholder, I want the Hadith Narrator Checker MVP to work seamlessly across the application and perform with fast load times.
+
+• Details & Flow:
+  - Integrate the search input (Task 2) with the backend action (Task 3) so that entering a hadith immediately triggers retrieval and display of narrators (Tasks 4 & 5).
+  - Ensure state is passed correctly between components:
+      ○ From search input → extraction -> narrator list → profile panel.
+  - Validate that authentication is integrated (using Clerk already in the template) for bookmarking and search history features.
+  - Perform UI reviews to ensure that all components use the shadcn/ui library, Tailwind variables, and that responsive design is baked in.
+  - Replace any remaining placeholders with actual libraries – for example, for any complex interactions (no use of dynamic imports as per requirement).
+
+• UI Details & Data Points:
+  - Cross-check that all components utilize Tailwind classes (e.g., bg-primary, text-primary-foreground).
+  - Final state management: global context if needed for user search history and global bookmark state.
+
+──────────────────────────────
+Notes for Subsequent (Future) Enhancements:
+
+• Future Task: Cross-Collection Hadith Lookup
+  - Allow users to view the same hadith in various canonical collections.
+  - Extend the backend action and add UI tabs for collection switching.
+
+• Future Task: Advanced Filters & Premium Insights
+  - Add advanced filters (era, region, credibility grade) in the narrator list.
+  - Implement premium features (e.g., export PDF) gated by freemium subscription through LemonSqueezy.
+
+──────────────────────────────
+This breakdown ensures that every feature—from the overall layout to the detailed narrator profile with scholarly opinions—is built in incremental, testable pieces. Each task defines clear state/data needs and UI details while using the Next.js SaaS Starter components and styling guidelines. This step-by-step approach ensures a fully functional and vertically integrated Hadith Narrator Checker MVP within the stipulated timeframe.

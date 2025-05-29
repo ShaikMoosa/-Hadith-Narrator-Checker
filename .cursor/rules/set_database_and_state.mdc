@@ -1,0 +1,119 @@
+Below are two clear sections: one for the minimal database schema and one for the UI state management. Both designs address only the necessary data points from the project breakdown while following best‐practices (using singular table names, auto‑generated id columns, and default user IDs as needed).
+
+──────────────────────────────
+1. Database Schema
+
+Below are four tables that store the user’s recent hadith search queries, bookmarks on narrators, core narrator details, and opinions from scholars. (You could later extend this if you decide to persist canonical hadith details.) Each table has an auto‑generated id column and, when needed, a user_id defaulting to next_auth.uid().
+
+------------------------------------------------
+-- Table: search
+-- Stores each hadith search (query text, lookup result status, and searched timestamp)
+------------------------------------------------
+create table search (
+  id       integer generated always as identity primary key,
+  query    text not null,
+  result_found boolean not null,
+  user_id  uuid not null default next_auth.uid(),
+  searched_at timestamp with time zone not null default now()
+);
+
+------------------------------------------------
+-- Table: bookmark
+-- Lets a user bookmark a narrator for later reference.
+------------------------------------------------
+create table bookmark (
+  id         integer generated always as identity primary key,
+  user_id    uuid not null default next_auth.uid(),
+  narrator_id integer not null references narrator(id) on delete cascade,
+  created_at timestamp with time zone not null default now()
+);
+
+------------------------------------------------
+-- Table: narrator
+-- Stores core details for each narrator, including names in Arabic and transliteration, credibility,
+-- and additional biographical metadata.
+------------------------------------------------
+create table narrator (
+  id                    integer generated always as identity primary key,
+  name_arabic           text not null,
+  name_transliteration  text,
+  credibility           text not null,    -- e.g., 'trustworthy' or 'weak'
+  biography             text,
+  birth_year            integer,
+  death_year            integer,
+  region                text,
+  created_at            timestamp with time zone not null default now()
+);
+
+------------------------------------------------
+-- Table: opinion
+-- Contains scholarly opinions about a narrator (linked via narrator_id) with verdicts and explanations.
+------------------------------------------------
+create table opinion (
+  id           integer generated always as identity primary key,
+  narrator_id  integer not null references narrator(id) on delete cascade,
+  scholar      text not null,
+  verdict      text not null,    -- e.g., 'trustworthy' or 'weak'
+  reason       text,
+  source_ref   text,             -- e.g., "Ṣaḥīḥ al-Bukhārī 1:45"
+  created_at   timestamp with time zone not null default now()
+);
+
+──────────────────────────────
+2. State Management
+
+Below are the TypeScript interfaces representing the key state slices across the Hadith search page and detailed narrator profile panel. The central search UI holds the hadith input, the resulting list of narrators, and (if any) the selected narrator. In addition, the narrator profile component maintains an active tab state so that users can switch between “Biography”, “Opinions”, and “Source References.”
+
+------------------------------------------------
+-- Core State for the Home/Search Page
+------------------------------------------------
+export interface Narrator {
+  id: string;
+  nameArabic: string;
+  nameTransliteration?: string;
+  credibility: string;
+  biography?: string;
+  birthYear?: number;
+  deathYear?: number;
+  region?: string;
+  createdAt: Date;
+}
+
+export interface Search {
+  id: string;
+  query: string;
+  resultFound: boolean;
+  searchedAt: Date;
+}
+
+export interface SearchState {
+  hadithInput: string;
+  narrators: Narrator[];
+  selectedNarrator: Narrator | null;
+  recentSearches: Search[];
+  // Actions:
+  setHadithInput: (input: string) => void;
+  setNarrators: (narrators: Narrator[]) => void;
+  setSelectedNarrator: (narrator: Narrator | null) => void;
+  setRecentSearches: (searches: Search[]) => void;
+}
+
+------------------------------------------------
+-- Local State for the Narrator Profile Panel
+------------------------------------------------
+export interface NarratorProfileState {
+  activeTab: "biography" | "opinions" | "sourceReferences";
+  // Actions:
+  setActiveTab: (tab: "biography" | "opinions" | "sourceReferences") => void;
+}
+
+──────────────────────────────
+Notes:
+• In both tables and state definitions we ensure naming consistency:
+  – Table names are singular (search, bookmark, narrator, opinion).
+  – References (narrator_id) properly use the singular table name with the _id suffix.
+  – user_id fields are added where data is user‑specific and default via next_auth.uid().
+• Database fields include timestamps to track when records were created.
+• The state interfaces focus on only what is needed to drive interactions (the input text, array of narrators, the currently selected narrator, and active profile tab).
+
+This minimal design both minimizes data redundancy in the database and makes it straightforward to integrate with component state in your Next.js SaaS Starter application.
