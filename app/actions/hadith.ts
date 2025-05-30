@@ -8,7 +8,17 @@ import type {
   Opinion, 
   Search, 
   ProcessHadithResponse,
-  BookmarkToggleData 
+  DatabaseNarrator,
+  DatabaseOpinion,
+  DatabaseSearch,
+  SearchSuggestion,
+  AdvancedSearchParams,
+  NarratorStats
+} from '@/types/hadith'
+import { 
+  convertDatabaseNarrator, 
+  convertDatabaseOpinion, 
+  convertDatabaseSearch 
 } from '@/types/hadith'
 
 /**
@@ -64,8 +74,8 @@ export async function processHadithText(hadithText: string): Promise<ProcessHadi
 
       if (narratorError) {
         console.error(`[ERROR] [${new Date().toISOString()}] Error fetching narrators:`, narratorError);
-      } else {
-        foundNarrators = narratorData || [];
+      } else if (narratorData) {
+        foundNarrators = narratorData.map(convertDatabaseNarrator);
       }
     }
 
@@ -77,7 +87,7 @@ export async function processHadithText(hadithText: string): Promise<ProcessHadi
         .limit(3);
 
       if (!defaultError && defaultNarrators) {
-        foundNarrators = defaultNarrators;
+        foundNarrators = defaultNarrators.map(convertDatabaseNarrator);
       }
     }
 
@@ -228,14 +238,15 @@ export async function toggleBookmark(narratorId: number): Promise<{ success: boo
 }
 
 /**
- * Fetch recent searches for a user
+ * Fetch recent searches for the current user
  */
 export async function fetchRecentSearches(): Promise<Search[]> {
-  console.log(`[INFO] [${new Date().toISOString()}] Fetching recent searches`);
+  console.log(`[INFO] [${new Date().toISOString()}] Fetching recent searches for user`);
 
   try {
     const session = await auth();
     if (!session?.user?.id) {
+      console.log(`[INFO] [${new Date().toISOString()}] No authenticated user found`);
       return [];
     }
 
@@ -254,7 +265,7 @@ export async function fetchRecentSearches(): Promise<Search[]> {
     }
 
     console.log(`[INFO] [${new Date().toISOString()}] Fetched ${data?.length || 0} recent searches`);
-    return data || [];
+    return (data as DatabaseSearch[])?.map(convertDatabaseSearch) || [];
   } catch (error) {
     console.error(`[ERROR] [${new Date().toISOString()}] Error in fetchRecentSearches:`, error);
     return [];
@@ -282,7 +293,7 @@ export async function fetchNarratorOpinions(narratorId: number): Promise<Opinion
     }
 
     console.log(`[INFO] [${new Date().toISOString()}] Fetched ${data?.length || 0} opinions for narrator ${narratorId}`);
-    return data || [];
+    return (data as DatabaseOpinion[])?.map(convertDatabaseOpinion) || [];
   } catch (error) {
     console.error(`[ERROR] [${new Date().toISOString()}] Error in fetchNarratorOpinions:`, error);
     return [];
@@ -346,7 +357,7 @@ export async function getAllNarrators(limit?: number): Promise<Narrator[]> {
     }
 
     console.log(`[INFO] [${new Date().toISOString()}] Fetched ${data?.length || 0} narrators`);
-    return data || [];
+    return (data as DatabaseNarrator[])?.map(convertDatabaseNarrator) || [];
   } catch (error) {
     console.error(`[ERROR] [${new Date().toISOString()}] Error in getAllNarrators:`, error);
     return [];
@@ -375,9 +386,398 @@ export async function searchNarrators(searchTerm: string): Promise<Narrator[]> {
     }
 
     console.log(`[INFO] [${new Date().toISOString()}] Found ${data?.length || 0} narrators matching "${searchTerm}"`);
-    return data || [];
+    return (data as DatabaseNarrator[])?.map(convertDatabaseNarrator) || [];
   } catch (error) {
     console.error(`[ERROR] [${new Date().toISOString()}] Error in searchNarrators:`, error);
     return [];
   }
+}
+
+/**
+ * Advanced narrator search with full-text search and filtering
+ */
+export async function searchNarratorsAdvanced(params: AdvancedSearchParams): Promise<(Narrator & { searchRank?: number })[]> {
+  console.log(`[INFO] [${new Date().toISOString()}] Advanced search with params:`, params);
+
+  try {
+    const supabase = await createSupabaseAdminClient();
+    
+    const {
+      searchTerm = '',
+      credibilityFilter = '',
+      regionFilter = '',
+      minBirthYear,
+      maxBirthYear,
+      limit = 20
+    } = params;
+
+    // Use the advanced search function if available, otherwise fallback to regular query
+    try {
+      const { data, error } = await supabase
+        .rpc('search_narrators_advanced', {
+          search_term: searchTerm,
+          credibility_filter: credibilityFilter,
+          region_filter: regionFilter,
+          min_birth_year: minBirthYear,
+          max_birth_year: maxBirthYear,
+          limit_count: limit
+        });
+
+      if (error) {
+        console.error(`[ERROR] [${new Date().toISOString()}] Error in advanced search RPC:`, error);
+        // Fallback to regular search
+        return await fallbackSearch(params);
+      }
+
+      const results = (data as DatabaseNarrator[])?.map(item => ({
+        ...convertDatabaseNarrator(item),
+        searchRank: item.search_rank
+      })) || [];
+
+      console.log(`[INFO] [${new Date().toISOString()}] Advanced search found ${results.length} results`);
+      return results;
+    } catch (rpcError) {
+      console.error(`[ERROR] [${new Date().toISOString()}] RPC function not available, using fallback:`, rpcError);
+      return await fallbackSearch(params);
+    }
+  } catch (error) {
+    console.error(`[ERROR] [${new Date().toISOString()}] Error in searchNarratorsAdvanced:`, error);
+    return [];
+  }
+}
+
+/**
+ * Fallback search function when RPC is not available
+ */
+async function fallbackSearch(params: AdvancedSearchParams): Promise<Narrator[]> {
+  try {
+    const supabase = await createSupabaseAdminClient();
+    
+    let query = supabase.from('narrator').select('*');
+    
+    if (params.searchTerm) {
+      query = query.or(`name_arabic.ilike.%${params.searchTerm}%,name_transliteration.ilike.%${params.searchTerm}%`);
+    }
+    
+    if (params.credibilityFilter) {
+      query = query.eq('credibility', params.credibilityFilter);
+    }
+    
+    if (params.regionFilter) {
+      query = query.ilike('region', `%${params.regionFilter}%`);
+    }
+    
+    if (params.minBirthYear) {
+      query = query.gte('birth_year', params.minBirthYear);
+    }
+    
+    if (params.maxBirthYear) {
+      query = query.lte('birth_year', params.maxBirthYear);
+    }
+    
+    query = query.order('name_arabic').limit(params.limit || 20);
+    
+    const { data, error } = await query;
+    
+    if (error) {
+      console.error(`[ERROR] [${new Date().toISOString()}] Error in fallback search:`, error);
+      return [];
+    }
+    
+    return (data as DatabaseNarrator[])?.map(convertDatabaseNarrator) || [];
+  } catch (error) {
+    console.error(`[ERROR] [${new Date().toISOString()}] Error in fallback search:`, error);
+    return [];
+  }
+}
+
+/**
+ * Get search suggestions for autocomplete
+ */
+export async function getSearchSuggestions(partialTerm: string, limit: number = 10): Promise<SearchSuggestion[]> {
+  console.log(`[INFO] [${new Date().toISOString()}] Getting suggestions for: "${partialTerm}"`);
+
+  try {
+    if (!partialTerm || partialTerm.length < 2) {
+      return [];
+    }
+
+    const supabase = await createSupabaseAdminClient();
+    
+    try {
+      const { data, error } = await supabase
+        .rpc('get_search_suggestions', {
+          partial_term: partialTerm,
+          suggestion_limit: limit
+        });
+
+      if (error) {
+        console.error(`[ERROR] [${new Date().toISOString()}] Error getting suggestions RPC:`, error);
+        return await fallbackSuggestions(partialTerm, limit);
+      }
+
+      const suggestions = (data as SearchSuggestion[]) || [];
+      console.log(`[INFO] [${new Date().toISOString()}] Found ${suggestions.length} suggestions`);
+      return suggestions;
+    } catch (rpcError) {
+      console.error(`[ERROR] [${new Date().toISOString()}] RPC function not available for suggestions:`, rpcError);
+      return await fallbackSuggestions(partialTerm, limit);
+    }
+  } catch (error) {
+    console.error(`[ERROR] [${new Date().toISOString()}] Error in getSearchSuggestions:`, error);
+    return [];
+  }
+}
+
+/**
+ * Fallback suggestions when RPC is not available
+ */
+async function fallbackSuggestions(partialTerm: string, limit: number): Promise<SearchSuggestion[]> {
+  try {
+    const supabase = await createSupabaseAdminClient();
+    
+    const { data, error } = await supabase
+      .from('narrator')
+      .select('name_arabic, name_transliteration, credibility, region')
+      .or(`name_arabic.ilike.${partialTerm}%,name_transliteration.ilike.${partialTerm}%`)
+      .limit(limit);
+    
+    if (error || !data) {
+      return [];
+    }
+    
+    const suggestions: SearchSuggestion[] = [];
+    
+    data.forEach(narrator => {
+      if (narrator.name_arabic?.toLowerCase().includes(partialTerm.toLowerCase())) {
+        suggestions.push({
+          suggestion: narrator.name_arabic,
+          type: 'arabic_name',
+          credibility: narrator.credibility || 'unknown'
+        });
+      }
+      if (narrator.name_transliteration?.toLowerCase().includes(partialTerm.toLowerCase())) {
+        suggestions.push({
+          suggestion: narrator.name_transliteration,
+          type: 'transliteration',
+          credibility: narrator.credibility || 'unknown'
+        });
+      }
+    });
+    
+    return suggestions.slice(0, limit);
+  } catch (error) {
+    console.error(`[ERROR] [${new Date().toISOString()}] Error in fallback suggestions:`, error);
+    return [];
+  }
+}
+
+/**
+ * Get narrator statistics for dashboard
+ */
+export async function getNarratorStats(): Promise<{
+  totalNarrators: number;
+  trustworthyCount: number;
+  weakCount: number;
+  regionsCount: number;
+  opinionsCount: number;
+}> {
+  console.log(`[INFO] [${new Date().toISOString()}] Fetching narrator statistics`);
+
+  try {
+    const supabase = await createSupabaseAdminClient();
+    
+    // Get narrator counts by credibility
+    const { data: narratorStats, error: narratorError } = await supabase
+      .from('narrator')
+      .select('credibility');
+
+    // Get unique regions count
+    const { data: regions, error: regionsError } = await supabase
+      .from('narrator')
+      .select('region')
+      .not('region', 'is', null);
+
+    // Get total opinions count
+    const { data: opinions, error: opinionsError } = await supabase
+      .from('opinion')
+      .select('id');
+
+    if (narratorError || regionsError || opinionsError) {
+      console.error(`[ERROR] [${new Date().toISOString()}] Error fetching stats:`, { narratorError, regionsError, opinionsError });
+      return {
+        totalNarrators: 0,
+        trustworthyCount: 0,
+        weakCount: 0,
+        regionsCount: 0,
+        opinionsCount: 0
+      };
+    }
+
+    const trustworthyCount = narratorStats?.filter(n => n.credibility === 'trustworthy').length || 0;
+    const weakCount = narratorStats?.filter(n => n.credibility === 'weak').length || 0;
+    const uniqueRegions = new Set(regions?.map(r => r.region).filter(Boolean));
+
+    const stats = {
+      totalNarrators: narratorStats?.length || 0,
+      trustworthyCount,
+      weakCount,
+      regionsCount: uniqueRegions.size,
+      opinionsCount: opinions?.length || 0
+    };
+
+    console.log(`[INFO] [${new Date().toISOString()}] Stats fetched:`, stats);
+    return stats;
+  } catch (error) {
+    console.error(`[ERROR] [${new Date().toISOString()}] Error in getNarratorStats:`, error);
+    return {
+      totalNarrators: 0,
+      trustworthyCount: 0,
+      weakCount: 0,
+      regionsCount: 0,
+      opinionsCount: 0
+    };
+  }
+}
+
+/**
+ * Get unique regions for filter dropdown
+ */
+export async function getAvailableRegions(): Promise<string[]> {
+  try {
+    const supabase = await createSupabaseAdminClient();
+    
+    const { data, error } = await supabase
+      .from('narrator')
+      .select('region')
+      .not('region', 'is', null)
+      .order('region');
+
+    if (error) {
+      console.error(`[ERROR] [${new Date().toISOString()}] Error fetching regions:`, error);
+      return [];
+    }
+
+    const uniqueRegions = [...new Set(data?.map(item => item.region).filter(Boolean))];
+    return uniqueRegions as string[];
+  } catch (error) {
+    console.error(`[ERROR] [${new Date().toISOString()}] Error in getAvailableRegions:`, error);
+    return [];
+  }
+}
+
+/**
+ * Enhanced processHadithText with better search integration
+ */
+export async function processHadithTextEnhanced(hadithText: string): Promise<ProcessHadithResponse> {
+  console.log(`[INFO] [${new Date().toISOString()}] Enhanced hadith processing for: "${hadithText.substring(0, 100)}..."`);
+
+  try {
+    // Input validation
+    if (!hadithText || hadithText.trim().length === 0) {
+      return {
+        success: false,
+        narrators: [],
+        error: 'Please provide a valid hadith text.'
+      };
+    }
+
+    // Get authenticated user
+    const session = await auth();
+    if (!session?.user?.id) {
+      return {
+        success: false,
+        narrators: [],
+        error: 'Authentication required.'
+      };
+    }
+
+    const normalizedText = hadithText.trim();
+
+    // Extract potential narrator names and search terms
+    const searchTerms = extractEnhancedSearchTerms(normalizedText);
+    
+    let foundNarrators: Narrator[] = [];
+    
+    // Use advanced search for each term
+    for (const term of searchTerms) {
+      const results = await searchNarratorsAdvanced({
+        searchTerm: term,
+        limit: 5
+      });
+      foundNarrators.push(...results);
+    }
+
+    // Remove duplicates
+    const uniqueNarrators = foundNarrators.filter((narrator, index, self) => 
+      index === self.findIndex(n => n.id === narrator.id)
+    );
+
+    // If no specific narrators found, get some defaults
+    if (uniqueNarrators.length === 0) {
+      const defaultResults = await searchNarratorsAdvanced({ limit: 3 });
+      uniqueNarrators.push(...defaultResults);
+    }
+
+    // Save search to database
+    await saveSearchToDatabase(session.user.id, hadithText, uniqueNarrators.length > 0);
+
+    console.log(`[INFO] [${new Date().toISOString()}] Enhanced processing found ${uniqueNarrators.length} narrators`);
+
+    return {
+      success: true,
+      narrators: uniqueNarrators,
+      hadithDetails: {
+        id: `hadith-${Date.now()}`,
+        text: normalizedText,
+        source: 'Enhanced Analysis',
+        chapter: 'Advanced Processing'
+      }
+    };
+
+  } catch (error) {
+    console.error(`[ERROR] [${new Date().toISOString()}] Error in enhanced processing:`, error);
+    return {
+      success: false,
+      narrators: [],
+      error: 'Failed to process hadith text. Please try again.'
+    };
+  }
+}
+
+/**
+ * Enhanced function to extract search terms from hadith text
+ */
+function extractEnhancedSearchTerms(text: string): string[] {
+  const enhancedTerms = [
+    // Arabic narrator indicators
+    'أبو هريرة', 'Abu Hurairah',
+    'عائشة', 'Aisha',
+    'أبو بكر', 'Abu Bakr', 
+    'عمر', 'Umar',
+    'علي', 'Ali',
+    // Hadith transmission terms
+    'حدثنا', 'أخبرنا', 'عن', 'قال',
+    // Common names
+    'محمد', 'أحمد', 'عبد الله', 'عبد الرحمن'
+  ];
+
+  const foundTerms: string[] = [];
+  
+  for (const term of enhancedTerms) {
+    if (text.includes(term)) {
+      foundTerms.push(term);
+    }
+  }
+
+  // Also extract quoted names or potential names
+  const namePattern = /(?:حدثنا|أخبرنا|عن)\s+([أ-ي\s]{3,})/g;
+  let match;
+  while ((match = namePattern.exec(text)) !== null) {
+    if (match[1]) {
+      foundTerms.push(match[1].trim());
+    }
+  }
+
+  return [...new Set(foundTerms)]; // Remove duplicates
 } 

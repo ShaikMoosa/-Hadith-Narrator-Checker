@@ -49,6 +49,7 @@ export type Database = {
           name_arabic: string
           name_transliteration: string | null
           region: string | null
+          search_vector: unknown | null
           updated_at: string | null
         }
         Insert: {
@@ -61,6 +62,7 @@ export type Database = {
           name_arabic: string
           name_transliteration?: string | null
           region?: string | null
+          search_vector?: unknown | null
           updated_at?: string | null
         }
         Update: {
@@ -73,6 +75,7 @@ export type Database = {
           name_arabic?: string
           name_transliteration?: string | null
           region?: string | null
+          search_vector?: unknown | null
           updated_at?: string | null
         }
         Relationships: []
@@ -213,10 +216,48 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      narrator_search_suggestions: {
+        Row: {
+          credibility: string | null
+          suggestion: string | null
+          type: string | null
+          usage_count: number | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
-      [_ in never]: never
+      get_search_suggestions: {
+        Args: { partial_term: string; suggestion_limit?: number }
+        Returns: {
+          suggestion: string
+          type: string
+          credibility: string
+        }[]
+      }
+      search_narrators_advanced: {
+        Args: {
+          search_term?: string
+          credibility_filter?: string
+          region_filter?: string
+          min_birth_year?: number
+          max_birth_year?: number
+          limit_count?: number
+        }
+        Returns: {
+          id: number
+          name_arabic: string
+          name_transliteration: string
+          credibility: string
+          biography: string
+          birth_year: number
+          death_year: number
+          region: string
+          created_at: string
+          updated_at: string
+          search_rank: number
+        }[]
+      }
     }
     Enums: {
       [_ in never]: never

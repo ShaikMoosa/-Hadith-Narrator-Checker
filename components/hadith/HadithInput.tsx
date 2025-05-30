@@ -4,17 +4,15 @@ import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { processHadithText } from '@/app/actions/hadith'
 import { Loader2, Search } from 'lucide-react'
-import type { ProcessHadithResponse } from '@/types/hadith'
 
 interface HadithInputProps {
-  onResults: (response: ProcessHadithResponse) => void;
+  onProcess: (hadithText: string) => Promise<void>;
+  isProcessing: boolean;
 }
 
-export default function HadithInput({ onResults }: HadithInputProps) {
+export default function HadithInput({ onProcess, isProcessing }: HadithInputProps) {
   const [hadithText, setHadithText] = useState('')
-  const [isProcessing, setIsProcessing] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -25,21 +23,13 @@ export default function HadithInput({ onResults }: HadithInputProps) {
       return
     }
 
-    setIsProcessing(true)
     setError(null)
 
     try {
-      const response = await processHadithText(hadithText)
-      onResults(response)
-      
-      if (!response.success) {
-        setError(response.error || 'Failed to process hadith text.')
-      }
+      await onProcess(hadithText)
     } catch (err) {
       console.error('Error processing hadith:', err)
       setError('An unexpected error occurred. Please try again.')
-    } finally {
-      setIsProcessing(false)
     }
   }
 
@@ -53,10 +43,10 @@ export default function HadithInput({ onResults }: HadithInputProps) {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Search className="h-5 w-5" />
-          Hadith Narrator Analysis
+          Hadith Text Analysis
         </CardTitle>
         <CardDescription>
-          Paste a hadith text below to analyze its narrator chain (isnad) and check the credibility of each narrator.
+          Enter a hadith text with its narrator chain (isnad) to identify and verify the narrators
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -67,34 +57,26 @@ export default function HadithInput({ onResults }: HadithInputProps) {
             </label>
             <Textarea
               id="hadith-text"
-              placeholder="حدثنا أبو هريرة رضي الله عنه قال: قال رسول الله صلى الله عليه وسلم..."
+              placeholder="حدثنا محمد بن عبد الله، عن أبي هريرة رضي الله عنه قال: قال رسول الله صلى الله عليه وسلم..."
               value={hadithText}
               onChange={(e) => setHadithText(e.target.value)}
               className="min-h-[120px] text-right"
-              dir="rtl"
+              dir="auto"
               disabled={isProcessing}
             />
           </div>
-          
+
           {error && (
-            <div className="p-3 text-sm text-red-600 bg-red-50 border border-red-200 rounded-md">
-              {error}
+            <div className="bg-red-50 border border-red-200 rounded-md p-3">
+              <p className="text-sm text-red-700">{error}</p>
             </div>
           )}
 
-          <div className="flex gap-2 justify-end">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={handleClear}
+          <div className="flex gap-3">
+            <Button 
+              type="submit" 
               disabled={isProcessing || !hadithText.trim()}
-            >
-              Clear
-            </Button>
-            <Button
-              type="submit"
-              disabled={isProcessing || !hadithText.trim()}
-              className="min-w-[120px]"
+              className="flex-1"
             >
               {isProcessing ? (
                 <>
@@ -104,21 +86,39 @@ export default function HadithInput({ onResults }: HadithInputProps) {
               ) : (
                 <>
                   <Search className="mr-2 h-4 w-4" />
-                  Analyze Narrators
+                  Analyze Hadith
                 </>
               )}
+            </Button>
+            
+            <Button 
+              type="button" 
+              variant="outline" 
+              onClick={handleClear}
+              disabled={isProcessing}
+            >
+              Clear
             </Button>
           </div>
         </form>
 
-        <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-md">
-          <h4 className="text-sm font-medium text-blue-900 mb-2">How it works:</h4>
-          <ul className="text-sm text-blue-800 space-y-1">
-            <li>• Paste the complete hadith text including the narrator chain (isnad)</li>
-            <li>• Our system will extract and identify each narrator in the chain</li>
-            <li>• View detailed information about each narrator's credibility and biography</li>
-            <li>• See scholarly opinions and assessments from classical hadith scholars</li>
-          </ul>
+        {/* Example Hadith */}
+        <div className="mt-6 p-4 bg-blue-50 rounded-lg">
+          <h4 className="font-medium text-blue-900 mb-2">Example Hadith:</h4>
+          <p className="text-sm text-blue-800 leading-relaxed" dir="rtl">
+            حدثنا أبو بكر بن أبي شيبة، حدثنا عبد الله بن نمير، عن عبيد الله، عن نافع، عن ابن عمر، 
+            أن رسول الله صلى الله عليه وسلم قال: "بني الإسلام على خمس..."
+          </p>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="mt-2 text-blue-700 hover:text-blue-900"
+            onClick={() => setHadithText('حدثنا أبو بكر بن أبي شيبة، حدثنا عبد الله بن نمير، عن عبيد الله، عن نافع، عن ابن عمر، أن رسول الله صلى الله عليه وسلم قال: "بني الإسلام على خمس: شهادة أن لا إله إلا الله وأن محمداً رسول الله، وإقام الصلاة، وإيتاء الزكاة، وحج البيت، وصوم رمضان"')}
+            disabled={isProcessing}
+          >
+            Use this example
+          </Button>
         </div>
       </CardContent>
     </Card>

@@ -5,9 +5,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Clock, Search, RotateCcw } from 'lucide-react'
 import { fetchRecentSearches } from '@/app/actions/hadith'
-import type { RecentSearchesProps, Search as SearchType } from '@/types/hadith'
+import type { Search as SearchType } from '@/types/hadith'
 
-export default function RecentSearches({ searches, onSearchSelect }: RecentSearchesProps) {
+interface RecentSearchesProps {
+  searches?: SearchType[];
+  onSearchSelect: (query: string) => void;
+}
+
+export default function RecentSearches({ searches = [], onSearchSelect }: RecentSearchesProps) {
   const [recentSearches, setRecentSearches] = useState<SearchType[]>(searches)
   const [loading, setLoading] = useState(false)
 
@@ -26,6 +31,8 @@ export default function RecentSearches({ searches, onSearchSelect }: RecentSearc
   useEffect(() => {
     if (searches.length === 0) {
       loadRecentSearches()
+    } else {
+      setRecentSearches(searches)
     }
   }, [searches])
 
@@ -49,66 +56,43 @@ export default function RecentSearches({ searches, onSearchSelect }: RecentSearc
     return query.substring(0, maxLength) + '...'
   }
 
-  if (recentSearches.length === 0 && !loading) {
-    return null
-  }
-
   return (
-    <Card className="w-full max-w-4xl mx-auto">
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
-        <div>
-          <CardTitle className="flex items-center gap-2">
-            <Clock className="h-5 w-5" />
-            Recent Searches
-          </CardTitle>
-          <CardDescription>
-            Quick access to your previous hadith analyses
-          </CardDescription>
-        </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={loadRecentSearches}
-          disabled={loading}
-          className="flex items-center gap-1"
-        >
-          <RotateCcw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-          Refresh
-        </Button>
+    <Card className="w-full">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Clock className="h-5 w-5" />
+          Recent Searches
+        </CardTitle>
+        <CardDescription>
+          Your recent hadith analysis queries
+        </CardDescription>
       </CardHeader>
       <CardContent>
         {loading ? (
           <div className="flex items-center justify-center py-8">
-            <div className="text-center text-gray-500">
-              <Clock className="h-8 w-8 mx-auto mb-2 opacity-50 animate-pulse" />
-              <p>Loading recent searches...</p>
-            </div>
+            <RotateCcw className="h-6 w-6 animate-spin" />
           </div>
-        ) : (
+        ) : recentSearches.length > 0 ? (
           <div className="space-y-3">
             {recentSearches.map((search) => (
               <div
                 key={search.id}
-                className="flex items-center justify-between p-3 border rounded-lg hover:bg-gray-50 transition-colors"
+                className="flex items-start justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors"
               >
                 <div className="flex-1 min-w-0">
-                  <p 
-                    className="text-sm font-medium text-gray-900 truncate cursor-pointer hover:text-blue-600"
-                    onClick={() => onSearchSelect(search.query)}
-                    title={search.query}
-                  >
+                  <p className="text-sm font-medium text-gray-900 truncate" dir="auto">
                     {truncateQuery(search.query)}
                   </p>
-                  <div className="flex items-center gap-3 mt-1">
+                  <div className="flex items-center gap-2 mt-1">
                     <span className="text-xs text-gray-500">
                       {formatSearchTime(search.searched_at)}
                     </span>
                     {search.result_found ? (
-                      <span className="text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded">
+                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
                         Results found
                       </span>
                     ) : (
-                      <span className="text-xs text-red-600 bg-red-50 px-2 py-0.5 rounded">
+                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">
                         No results
                       </span>
                     )}
@@ -118,12 +102,31 @@ export default function RecentSearches({ searches, onSearchSelect }: RecentSearc
                   variant="ghost"
                   size="sm"
                   onClick={() => onSearchSelect(search.query)}
-                  className="ml-3 flex-shrink-0"
+                  className="ml-2 flex-shrink-0"
                 >
                   <Search className="h-4 w-4" />
                 </Button>
               </div>
             ))}
+            
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={loadRecentSearches}
+              disabled={loading}
+              className="w-full mt-4"
+            >
+              <RotateCcw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+              Refresh
+            </Button>
+          </div>
+        ) : (
+          <div className="text-center py-8">
+            <Clock className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+            <p className="text-gray-500 text-sm">No recent searches found</p>
+            <p className="text-gray-400 text-xs mt-1">
+              Start analyzing hadith texts to see your search history here
+            </p>
           </div>
         )}
       </CardContent>

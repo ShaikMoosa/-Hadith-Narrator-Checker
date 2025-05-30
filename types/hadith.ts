@@ -10,7 +10,7 @@ export interface Narrator {
   death_year?: number | null;
   region?: string | null;
   created_at: string;
-  updated_at?: string;
+  updated_at?: string | null;
 }
 
 export interface Opinion {
@@ -21,7 +21,7 @@ export interface Opinion {
   reason?: string | null;
   source_ref?: string | null;
   created_at: string;
-  updated_at?: string;
+  updated_at?: string | null;
 }
 
 export interface Bookmark {
@@ -37,6 +37,103 @@ export interface Search {
   result_found: boolean;
   user_id: string;
   searched_at: string;
+}
+
+// Database result types for type safety
+export interface DatabaseNarrator {
+  id: number;
+  name_arabic: string;
+  name_transliteration: string | null;
+  credibility: string;
+  biography: string | null;
+  birth_year: number | null;
+  death_year: number | null;
+  region: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  search_rank?: number;
+}
+
+export interface DatabaseOpinion {
+  id: number;
+  narrator_id: number;
+  scholar: string;
+  verdict: string;
+  reason: string | null;
+  source_ref: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface DatabaseSearch {
+  id: number;
+  query: string;
+  result_found: boolean;
+  user_id: string;
+  searched_at: string | null;
+}
+
+// Search and suggestion types
+export interface SearchSuggestion {
+  suggestion: string;
+  type: string;
+  credibility: string;
+}
+
+export interface AdvancedSearchParams {
+  searchTerm?: string;
+  credibilityFilter?: 'trustworthy' | 'weak' | '';
+  regionFilter?: string;
+  minBirthYear?: number;
+  maxBirthYear?: number;
+  limit?: number;
+}
+
+export interface NarratorStats {
+  totalNarrators: number;
+  trustworthyCount: number;
+  weakCount: number;
+  regionsCount: number;
+  opinionsCount: number;
+}
+
+// Type conversion functions
+export function convertDatabaseNarrator(dbNarrator: DatabaseNarrator): Narrator {
+  return {
+    id: dbNarrator.id,
+    name_arabic: dbNarrator.name_arabic,
+    name_transliteration: dbNarrator.name_transliteration,
+    credibility: dbNarrator.credibility as 'trustworthy' | 'weak',
+    biography: dbNarrator.biography,
+    birth_year: dbNarrator.birth_year,
+    death_year: dbNarrator.death_year,
+    region: dbNarrator.region,
+    created_at: dbNarrator.created_at || new Date().toISOString(),
+    updated_at: dbNarrator.updated_at,
+  };
+}
+
+export function convertDatabaseOpinion(dbOpinion: DatabaseOpinion): Opinion {
+  return {
+    id: dbOpinion.id,
+    narrator_id: dbOpinion.narrator_id,
+    scholar: dbOpinion.scholar,
+    verdict: dbOpinion.verdict as 'trustworthy' | 'weak',
+    reason: dbOpinion.reason,
+    source_ref: dbOpinion.source_ref,
+    created_at: dbOpinion.created_at || new Date().toISOString(),
+    updated_at: dbOpinion.updated_at,
+  };
+}
+
+export function convertDatabaseSearch(dbSearch: DatabaseSearch): Search {
+  return {
+    id: dbSearch.id,
+    query: dbSearch.query,
+    result_found: dbSearch.result_found,
+    user_id: dbSearch.user_id,
+    searched_at: dbSearch.searched_at || new Date().toISOString(),
+  };
 }
 
 // Frontend Application State Types
