@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Clock, Search, RotateCcw } from 'lucide-react'
@@ -15,26 +15,44 @@ interface RecentSearchesProps {
 export default function RecentSearches({ searches = [], onSearchSelect }: RecentSearchesProps) {
   const [recentSearches, setRecentSearches] = useState<SearchType[]>(searches)
   const [loading, setLoading] = useState(false)
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false)
+  const mountedRef = useRef(true)
 
   const loadRecentSearches = async () => {
+    if (loading || !mountedRef.current) return
+    
     setLoading(true)
     try {
       const fetchedSearches = await fetchRecentSearches()
-      setRecentSearches(fetchedSearches)
+      if (mountedRef.current) {
+        setRecentSearches(fetchedSearches)
+        setHasLoadedOnce(true)
+      }
     } catch (error) {
       console.error('Error loading recent searches:', error)
     } finally {
-      setLoading(false)
+      if (mountedRef.current) {
+        setLoading(false)
+      }
     }
   }
 
+  // Cleanup on unmount
   useEffect(() => {
-    if (searches.length === 0) {
-      loadRecentSearches()
-    } else {
-      setRecentSearches(searches)
+    return () => {
+      mountedRef.current = false
     }
-  }, [searches])
+  }, [])
+
+  // Only load recent searches once if no searches are provided and we haven't loaded yet
+  useEffect(() => {
+    if (searches.length > 0) {
+      setRecentSearches(searches)
+      setHasLoadedOnce(true)
+    } else if (!hasLoadedOnce && !loading) {
+      loadRecentSearches()
+    }
+  }, [searches.length, hasLoadedOnce, loading])
 
   const formatSearchTime = (searchedAt: string) => {
     const date = new Date(searchedAt)
@@ -54,6 +72,11 @@ export default function RecentSearches({ searches = [], onSearchSelect }: Recent
   const truncateQuery = (query: string, maxLength: number = 60) => {
     if (query.length <= maxLength) return query
     return query.substring(0, maxLength) + '...'
+  }
+
+  const handleRefresh = () => {
+    setHasLoadedOnce(false)
+    loadRecentSearches()
   }
 
   return (
@@ -112,7 +135,7 @@ export default function RecentSearches({ searches = [], onSearchSelect }: Recent
             <Button
               variant="outline"
               size="sm"
-              onClick={loadRecentSearches}
+              onClick={handleRefresh}
               disabled={loading}
               className="w-full mt-4"
             >
@@ -120,12 +143,20 @@ export default function RecentSearches({ searches = [], onSearchSelect }: Recent
               Refresh
             </Button>
           </div>
-        ) : (
+        ) : hasLoadedOnce ? (
           <div className="text-center py-8">
             <Clock className="h-12 w-12 text-gray-400 mx-auto mb-4" />
             <p className="text-gray-500 text-sm">No recent searches found</p>
             <p className="text-gray-400 text-xs mt-1">
-              Start analyzing hadith texts to see your search history here
+              {!hasLoadedOnce ? 'Sign in to see your search history' : 'Start analyzing hadith texts to see your search history here'}
+            </p>
+          </div>
+        ) : (
+          <div className="text-center py-8">
+            <Clock className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+            <p className="text-gray-500 text-sm">Sign in to see your recent searches</p>
+            <p className="text-gray-400 text-xs mt-1">
+              Your search history will appear here after you authenticate
             </p>
           </div>
         )}

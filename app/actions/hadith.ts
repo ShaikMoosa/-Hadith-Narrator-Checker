@@ -39,15 +39,11 @@ export async function processHadithText(hadithText: string): Promise<ProcessHadi
       };
     }
 
-    // Get authenticated user
+    // Get authenticated user - make it optional for now
     const session = await auth();
-    if (!session?.user?.id) {
-      return {
-        success: false,
-        narrators: [],
-        error: 'Authentication required.'
-      };
-    }
+    const userId = session?.user?.id || 'anonymous';
+    
+    console.log(`[INFO] [${new Date().toISOString()}] Processing hadith for user: ${userId}`);
 
     const normalizedText = hadithText.trim();
     console.log(`[INFO] [${new Date().toISOString()}] Normalized hadith text: "${normalizedText.substring(0, 100)}..."`);
@@ -91,8 +87,12 @@ export async function processHadithText(hadithText: string): Promise<ProcessHadi
       }
     }
 
-    // Save search to database
-    await saveSearchToDatabase(session.user.id, hadithText, foundNarrators.length > 0);
+    // Save search to database only if user is authenticated
+    if (session?.user?.id) {
+      await saveSearchToDatabase(session.user.id, hadithText, foundNarrators.length > 0);
+    } else {
+      console.log(`[INFO] [${new Date().toISOString()}] Skipping search save - user not authenticated`);
+    }
 
     console.log(`[INFO] [${new Date().toISOString()}] Successfully processed hadith and found ${foundNarrators.length} narrators`);
 

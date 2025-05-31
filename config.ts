@@ -48,7 +48,7 @@ const config = {
 		twitter: "https://twitter.com",
 		linkedin: "https://linkedin.com"
 	},
-	emailProvider: "nodemailer",
+	emailProvider: "resend",
 };
 
 
