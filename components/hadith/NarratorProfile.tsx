@@ -33,7 +33,7 @@ export default function NarratorProfile({ narrator, onClose }: NarratorProfilePr
     return credibility === 'trustworthy' ? 'trustworthy' : 'weak'
   }
 
-  const formatLifespan = (birthYear?: number, deathYear?: number) => {
+  const formatLifespan = (birthYear?: number | null, deathYear?: number | null) => {
     if (!birthYear && !deathYear) return 'Dates unknown'
     if (birthYear && deathYear) return `${birthYear} - ${deathYear} AH`
     if (birthYear) return `Born ${birthYear} AH`

@@ -9,7 +9,12 @@
     "lint": "next lint",
     "email": "email dev",
     "lint:ts": "tsc --noEmit",
-    "stripe:listen": "stripe listen --forward-to localhost:3000/api/webhook/stripe"
+    "stripe:listen": "stripe listen --forward-to localhost:3000/api/webhook/stripe",
+    "test": "node scripts/run-tests.js",
+    "test:ui": "node scripts/run-tests.js ui",
+    "test:debug": "node scripts/run-tests.js debug",
+    "test:headed": "node scripts/run-tests.js headed",
+    "test:install": "npm install --save-dev @playwright/test && npx playwright install"
   },
   "dependencies": {
     "@auth/supabase-adapter": "^1.7.4",

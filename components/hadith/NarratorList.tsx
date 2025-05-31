@@ -64,7 +64,7 @@ export default function NarratorList({ narrators, onSelectNarrator }: NarratorLi
     return credibility === 'trustworthy' ? 'trustworthy' : 'weak'
   }
 
-  const formatLifespan = (birthYear?: number, deathYear?: number) => {
+  const formatLifespan = (birthYear?: number | null, deathYear?: number | null) => {
     if (!birthYear && !deathYear) return null
     if (birthYear && deathYear) return `${birthYear} - ${deathYear} AH`
     if (birthYear) return `b. ${birthYear} AH`
