@@ -25,6 +25,7 @@ import AdvancedSearch from '@/components/hadith/AdvancedSearch'
 import StatsDashboard from '@/components/hadith/StatsDashboard'
 import BulkHadithProcessor from '@/components/hadith/BulkHadithProcessor'
 import HadithSimilarityEngine from '@/components/hadith/HadithSimilarityEngine'
+import { AIAnalysisDashboard } from '@/components/hadith/AIAnalysisDashboard'
 
 // Import actions and types
 import { processHadithText } from '@/app/actions/hadith'
@@ -174,7 +175,7 @@ export default function HadithApp() {
 
         {/* Main Application */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-5" dir="ltr">
+          <TabsList className="grid w-full grid-cols-6" dir="ltr">
             <TabsTrigger value="input" className="flex items-center gap-2">
               <BookOpen className="h-4 w-4" />
               Hadith Analysis
@@ -186,6 +187,10 @@ export default function HadithApp() {
             <TabsTrigger value="results" className="flex items-center gap-2">
               <Users className="h-4 w-4" />
               Results ({narrators.length})
+            </TabsTrigger>
+            <TabsTrigger value="ai" className="flex items-center gap-2">
+              <Sparkles className="h-4 w-4" />
+              AI Analysis
             </TabsTrigger>
             <TabsTrigger value="advanced" className="flex items-center gap-2">
               <Zap className="h-4 w-4" />
@@ -296,6 +301,11 @@ export default function HadithApp() {
                 </CardContent>
               </Card>
             )}
+          </TabsContent>
+
+          {/* AI Analysis Tab */}
+          <TabsContent value="ai" className="space-y-6" dir="ltr">
+            <AIAnalysisDashboard />
           </TabsContent>
 
           {/* Advanced Processing Tab */}
