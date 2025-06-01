@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { useSession } from "next-auth/react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -26,6 +27,7 @@ import {
   Clock,
 } from "lucide-react"
 import Link from "next/link"
+import { handleSignIn } from "@/app/actions/auth"
 
 // Animated Counter Component
 function AnimatedCounter({ end, duration = 2000, suffix = "" }: { end: number; duration?: number; suffix?: string }) {
@@ -55,6 +57,43 @@ function AnimatedCounter({ end, duration = 2000, suffix = "" }: { end: number; d
       {count.toLocaleString()}
       {suffix}
     </span>
+  )
+}
+
+// Authentication Button Component
+function AuthButton({ children, size = "lg", variant = "default", className = "" }: { 
+  children: React.ReactNode
+  size?: "sm" | "lg" | "default"
+  variant?: "default" | "outline" | "ghost"
+  className?: string
+}) {
+  const { data: session, status } = useSession()
+
+  if (status === "loading") {
+    return (
+      <Button size={size} variant={variant} className={className} disabled>
+        <div className="h-4 w-4 animate-spin rounded-full border-2 border-transparent border-t-current mr-2" />
+        Loading...
+      </Button>
+    )
+  }
+
+  if (session?.user) {
+    return (
+      <Button asChild size={size} variant={variant} className={className}>
+        <Link href="/app">
+          {children}
+        </Link>
+      </Button>
+    )
+  }
+
+  return (
+    <form action={handleSignIn} className="inline">
+      <Button type="submit" size={size} variant={variant} className={className}>
+        {children}
+      </Button>
+    </form>
   )
 }
 
@@ -238,9 +277,9 @@ export default function HadithNarratorChecker() {
               <Link href="#technology" className="text-gray-600 hover:text-green-600 transition-colors">
                 Technology
               </Link>
-              <Button asChild className="bg-gradient-to-r from-green-600 to-blue-600 hover:from-green-700 hover:to-blue-700">
-                <Link href="/app">Start Free Analysis</Link>
-              </Button>
+              <AuthButton className="bg-gradient-to-r from-green-600 to-blue-600 hover:from-green-700 hover:to-blue-700">
+                Start Free Analysis
+              </AuthButton>
             </nav>
           </div>
         </div>
@@ -267,27 +306,21 @@ export default function HadithNarratorChecker() {
 
             {/* CTAs */}
             <div className="flex flex-col sm:flex-row gap-4 justify-center items-center mb-12">
-              <Button
-                asChild
+              <AuthButton
                 size="lg"
                 className="bg-gradient-to-r from-green-600 to-blue-600 hover:from-green-700 hover:to-blue-700 text-lg px-8 py-3"
               >
-                <Link href="/app">
-                  <Play className="h-5 w-5 mr-2" />
-                  Start Free Analysis
-                </Link>
-              </Button>
-              <Button
-                asChild
+                <Play className="h-5 w-5 mr-2" />
+                Start Free Analysis
+              </AuthButton>
+              <AuthButton
                 size="lg"
                 variant="outline"
                 className="text-lg px-8 py-3 border-green-600 text-green-600 hover:bg-green-50"
               >
-                <Link href="/app">
-                  <Database className="h-5 w-5 mr-2" />
-                  Access Database
-                </Link>
-              </Button>
+                <Database className="h-5 w-5 mr-2" />
+                Access Database
+              </AuthButton>
               <Button asChild size="lg" variant="ghost" className="text-lg px-8 py-3 text-blue-600 hover:bg-blue-50">
                 <Link href="#demo">
                   <Play className="h-5 w-5 mr-2" />
@@ -475,12 +508,10 @@ export default function HadithNarratorChecker() {
                 </div>
               </div>
 
-              <Button asChild className="bg-gradient-to-r from-green-600 to-blue-600 hover:from-green-700 hover:to-blue-700">
-                <Link href="/app">
-                  Learn About Our Methodology
-                  <ArrowRight className="h-4 w-4 ml-2" />
-                </Link>
-              </Button>
+              <AuthButton className="bg-gradient-to-r from-green-600 to-blue-600 hover:from-green-700 hover:to-blue-700">
+                Learn About Our Methodology
+                <ArrowRight className="h-4 w-4 ml-2" />
+              </AuthButton>
             </div>
 
             <div className="relative">
@@ -542,12 +573,10 @@ export default function HadithNarratorChecker() {
                 </div>
 
                 <div className="flex flex-col sm:flex-row gap-4">
-                  <Button asChild className="flex-1 bg-gradient-to-r from-green-600 to-blue-600 hover:from-green-700 hover:to-blue-700">
-                    <Link href="/app">
-                      <Search className="h-4 w-4 mr-2" />
-                      Analyze Narrators
-                    </Link>
-                  </Button>
+                  <AuthButton className="flex-1 bg-gradient-to-r from-green-600 to-blue-600 hover:from-green-700 hover:to-blue-700">
+                    <Search className="h-4 w-4 mr-2" />
+                    Analyze Narrators
+                  </AuthButton>
                   <Button variant="outline" className="flex-1">
                     <Download className="h-4 w-4 mr-2" />
                     Download Sample Report
@@ -609,23 +638,18 @@ export default function HadithNarratorChecker() {
           </p>
 
           <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
-            <Button asChild size="lg" className="bg-white text-green-600 hover:bg-gray-100 text-lg px-8 py-3">
-              <Link href="/app">
-                <Play className="h-5 w-5 mr-2" />
-                Start Free Analysis
-              </Link>
-            </Button>
-            <Button
-              asChild
+            <AuthButton size="lg" className="bg-white text-green-600 hover:bg-gray-100 text-lg px-8 py-3">
+              <Play className="h-5 w-5 mr-2" />
+              Start Free Analysis
+            </AuthButton>
+            <AuthButton
               size="lg"
               variant="outline"
               className="border-white text-white hover:bg-white hover:text-green-600 text-lg px-8 py-3"
             >
-              <Link href="/app">
-                <Users className="h-5 w-5 mr-2" />
-                Join Community
-              </Link>
-            </Button>
+              <Users className="h-5 w-5 mr-2" />
+              Join Community
+            </AuthButton>
           </div>
 
           <div className="mt-12 grid grid-cols-2 md:grid-cols-4 gap-8 text-center">
