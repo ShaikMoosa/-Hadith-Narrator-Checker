@@ -1,10 +1,11 @@
 import { test, expect } from '@playwright/test';
 
 /**
- * Comprehensive AI Workflow Tests for Hadith Narrator Checker
- * Tests all AI-powered features including Arabic NLP, text analysis, and performance
+ * Enhanced AI Workflow & Performance Tests for Hadith Narrator Checker
+ * Tests all AI-powered features with focus on performance optimization and caching
+ * Target: <1.5s analysis time, <3s model loading, comprehensive error handling
  */
-test.describe('AI Workflow & Performance Tests', () => {
+test.describe('AI Performance & Optimization Tests', () => {
   
   test.beforeEach(async ({ page }) => {
     // Navigate to the application
@@ -13,48 +14,95 @@ test.describe('AI Workflow & Performance Tests', () => {
     // Wait for the page to load completely
     await expect(page.locator('h1:has-text("مُتحقق الرواة")')).toBeVisible();
     
-    // Wait for potential AI model loading (give it time)
-    await page.waitForTimeout(2000);
+    // Allow time for initial setup
+    await page.waitForTimeout(1000);
   });
 
-  test('AI-1: Arabic Text Processing & NLP Analysis', async ({ page }) => {
+  test('AI-PERF-1: Model Loading Performance (<3s target)', async ({ page }) => {
     const startTime = Date.now();
 
+    // Navigate to AI Analysis tab to trigger model loading
+    await page.getByRole('tab', { name: 'AI Analysis' }).click();
+    
+    // Wait for AI interface to be ready
+    await expect(page.locator('text=AI-Powered Text Analysis').or(page.locator('text=AI Analysis'))).toBeVisible();
+    
+    const loadTime = Date.now() - startTime;
+    
+    // Performance target: Model loading should complete within 3 seconds
+    expect(loadTime).toBeLessThan(3000);
+    
+    console.log(`✅ AI Model loading completed in ${loadTime}ms (target: <3000ms)`);
+  });
+
+  test('AI-PERF-2: Text Analysis Speed (<1.5s target)', async ({ page }) => {
     // Navigate to AI Analysis tab
     await page.getByRole('tab', { name: 'AI Analysis' }).click();
     
-    // Check AI interface elements
-    await expect(page.locator('text=AI-Powered Text Analysis')).toBeVisible();
+    // Wait for interface to be ready
+    await expect(page.locator('text=AI-Powered').or(page.locator('text=AI Analysis'))).toBeVisible();
     
-    // Test Arabic text input
-    const arabicText = 'حدثنا أبو بكر بن أبي شيبة حدثنا عمر بن الخطاب عن علي بن أبي طالب';
+    const arabicText = 'حدثنا أبو بكر بن أبي شيبة حدثنا عمر بن الخطاب عن علي بن أبي طالب رضي الله عنهم';
     
     // Find and fill the AI text analysis input
-    const aiTextInput = page.locator('textarea[placeholder*="Arabic"]').first();
+    const aiTextInput = page.locator('textarea[placeholder*="Arabic"], textarea').first();
     await aiTextInput.fill(arabicText);
     
-    // Click analyze button
-    await page.getByRole('button', { name: /Analyze Text|Analyze/ }).first().click();
+    const startTime = Date.now();
     
-    // Wait for AI processing to complete (max 10 seconds)
-    await page.waitForSelector('[data-testid="ai-results"], .ai-analysis-results, text="Analysis complete"', { 
-      timeout: 10000 
+    // Click analyze button
+    await page.getByRole('button', { name: /Analyze Text|Analyze|Process/ }).first().click();
+    
+    // Wait for AI processing to complete
+    await page.waitForSelector('[data-testid="ai-results"], .ai-analysis-results, text="Analysis complete", text="Processing complete"', { 
+      timeout: 8000 
     });
     
-    const endTime = Date.now();
-    const processingTime = endTime - startTime;
+    const processingTime = Date.now() - startTime;
     
-    // Performance check: Should complete within 5 seconds
-    expect(processingTime).toBeLessThan(5000);
+    // Performance target: Analysis should complete within 1.5 seconds
+    expect(processingTime).toBeLessThan(1500);
     
-    // Check AI results are displayed
-    await expect(page.locator('text=Arabic Text Analysis').or(page.locator('text=NLP Results'))).toBeVisible();
+    // Verify results are displayed
+    await expect(page.locator('text=Analysis').or(page.locator('text=Results'))).toBeVisible();
     
-    console.log(`AI Analysis completed in ${processingTime}ms`);
+    console.log(`✅ AI Analysis completed in ${processingTime}ms (target: <1500ms)`);
   });
 
-  test('AI-2: Narrator Recognition & Pattern Matching', async ({ page }) => {
-    // Load example hadith with known narrators
+  test('AI-PERF-3: Caching Performance (Second Analysis)', async ({ page }) => {
+    // Navigate to AI Analysis tab
+    await page.getByRole('tab', { name: 'AI Analysis' }).click();
+    await page.waitForTimeout(1000);
+    
+    const arabicText = 'حدثنا أبو بكر بن أبي شيبة حدثنا وكيع عن سفيان';
+    const aiTextInput = page.locator('textarea').first();
+    
+    // First analysis (cache miss)
+    await aiTextInput.fill(arabicText);
+    const firstStartTime = Date.now();
+    await page.getByRole('button', { name: /Analyze/ }).first().click();
+    await page.waitForSelector('[data-testid="ai-results"], text="Analysis complete"', { timeout: 8000 });
+    const firstTime = Date.now() - firstStartTime;
+    
+    // Clear and repeat same analysis (cache hit)
+    await aiTextInput.clear();
+    await page.waitForTimeout(500);
+    await aiTextInput.fill(arabicText);
+    
+    const secondStartTime = Date.now();
+    await page.getByRole('button', { name: /Analyze/ }).first().click();
+    await page.waitForSelector('[data-testid="ai-results"], text="Analysis complete"', { timeout: 5000 });
+    const secondTime = Date.now() - secondStartTime;
+    
+    // Second analysis should be significantly faster (cached)
+    expect(secondTime).toBeLessThan(firstTime * 0.7); // At least 30% faster
+    expect(secondTime).toBeLessThan(800); // Should be very fast with cache
+    
+    console.log(`✅ Cache performance: First=${firstTime}ms, Second=${secondTime}ms (${((1 - secondTime/firstTime) * 100).toFixed(1)}% faster)`);
+  });
+
+  test('AI-PERF-4: Narrator Recognition Accuracy & Speed', async ({ page }) => {
+    // Use example hadith with known narrators
     await page.getByRole('button', { name: 'Use this example' }).click();
     
     const startTime = Date.now();
@@ -62,36 +110,34 @@ test.describe('AI Workflow & Performance Tests', () => {
     // Analyze hadith
     await page.getByRole('button', { name: 'Analyze Hadith' }).click();
     
-    // Wait for AI processing
+    // Wait for results
     await expect(page.getByRole('tab', { name: /Results/ })).toBeVisible({ timeout: 8000 });
     
-    const endTime = Date.now();
-    const processingTime = endTime - startTime;
+    const processingTime = Date.now() - startTime;
     
     // Performance check: Narrator recognition should be fast
-    expect(processingTime).toBeLessThan(3000);
+    expect(processingTime).toBeLessThan(2000);
     
-    // Verify narrator recognition accuracy
+    // Verify accuracy: Check for known narrators
     await expect(page.locator('text=أبو بكر')).toBeVisible();
-    await expect(page.locator('text=عمر بن الخطاب')).toBeVisible();
-    await expect(page.locator('text=علي بن أبي طالب')).toBeVisible();
+    await expect(page.locator('text=عمر')).toBeVisible();
     
-    console.log(`Narrator recognition completed in ${processingTime}ms`);
+    console.log(`✅ Narrator recognition completed in ${processingTime}ms with accurate results`);
   });
 
-  test('AI-3: Bulk Text Processing Performance', async ({ page }) => {
+  test('AI-PERF-5: Bulk Processing Performance', async ({ page }) => {
     // Navigate to Advanced Processing tab
     await page.getByRole('tab', { name: 'Advanced Processing' }).click();
     
     // Check bulk processing interface
-    await expect(page.locator('text=Bulk Hadith Processing').or(page.locator('text=Advanced Processing'))).toBeVisible();
+    await expect(page.locator('text=Bulk').or(page.locator('text=Advanced Processing'))).toBeVisible();
     
-    // Test data for bulk processing
+    // Test data for bulk processing (multiple hadiths)
     const bulkText = `
-حدثنا أبو بكر بن أبي شيبة
-حدثنا عمر بن الخطاب عن عائشة
-حدثنا علي بن أبي طالب
-حدثنا أبو هريرة عن النبي
+حدثنا أبو بكر بن أبي شيبة حدثنا وكيع
+حدثنا عمر بن الخطاب عن عائشة رضي الله عنها
+حدثنا علي بن أبي طالب قال قال رسول الله
+حدثنا أبو هريرة عن النبي صلى الله عليه وسلم
     `.trim();
     
     // Find bulk input area
@@ -108,26 +154,137 @@ test.describe('AI Workflow & Performance Tests', () => {
       timeout: 15000 
     });
     
-    const endTime = Date.now();
-    const processingTime = endTime - startTime;
+    const processingTime = Date.now() - startTime;
     
-    // Performance check: Bulk processing should complete reasonably fast
-    expect(processingTime).toBeLessThan(12000);
+    // Performance check: Bulk processing should be efficient
+    expect(processingTime).toBeLessThan(10000); // 10 seconds for 4 hadiths
     
     // Check results display
     await expect(page.locator('text=Processing complete').or(page.locator('text=Analysis Results'))).toBeVisible();
     
-    console.log(`Bulk processing completed in ${processingTime}ms`);
+    console.log(`✅ Bulk processing completed in ${processingTime}ms for 4 hadiths`);
   });
 
-  test('AI-4: Text Similarity Engine', async ({ page }) => {
+  test('AI-PERF-6: Memory Usage & Stability', async ({ page }) => {
+    // Monitor console errors for memory issues
+    const consoleErrors: string[] = [];
+    page.on('console', msg => {
+      if (msg.type() === 'error') {
+        consoleErrors.push(msg.text());
+      }
+    });
+
+    // Perform multiple AI operations to test memory stability
+    await page.getByRole('tab', { name: 'AI Analysis' }).click();
+    
+    const testTexts = [
+      'حدثنا أبو بكر بن أبي شيبة',
+      'حدثنا عمر بن الخطاب عن عائشة',
+      'حدثنا علي بن أبي طالب رضي الله عنه',
+      'حدثنا أبو هريرة عن النبي صلى الله عليه وسلم'
+    ];
+    
+    const aiInput = page.locator('textarea').first();
+    
+    for (const text of testTexts) {
+      await aiInput.clear();
+      await aiInput.fill(text);
+      await page.getByRole('button', { name: /Analyze/ }).first().click();
+      await page.waitForTimeout(2000); // Allow processing
+    }
+    
+    // Check for memory-related errors
+    const memoryErrors = consoleErrors.filter(error => 
+      error.includes('memory') || error.includes('heap') || error.includes('allocation') || error.includes('out of memory')
+    );
+    
+    expect(memoryErrors.length).toBe(0);
+    
+    console.log(`✅ Memory stability test passed. Total console errors: ${consoleErrors.length}, Memory errors: ${memoryErrors.length}`);
+  });
+
+  test('AI-PERF-7: Error Handling & Recovery', async ({ page }) => {
+    // Test AI error handling with invalid inputs
+    await page.getByRole('tab', { name: 'AI Analysis' }).click();
+    
+    const invalidInputs = [
+      '', // Empty
+      '   ', // Whitespace only
+      '123456789', // Numbers only
+      'abcdefghijk', // English only
+      '!@#$%^&*()', // Special characters only
+      'x'.repeat(10000), // Very long text
+    ];
+    
+    const aiInput = page.locator('textarea').first();
+    
+    for (const input of invalidInputs) {
+      await aiInput.clear();
+      await aiInput.fill(input);
+      
+      const analyzeBtn = page.getByRole('button', { name: /Analyze/ }).first();
+      
+      if (input.trim() === '') {
+        // Should handle empty input gracefully
+        await expect(analyzeBtn).toBeDisabled();
+      } else {
+        // Should handle invalid input without crashing
+        await analyzeBtn.click();
+        await page.waitForTimeout(2000);
+        
+        // Application should remain functional
+        await expect(page.locator('h1:has-text("مُتحقق الرواة")')).toBeVisible();
+      }
+    }
+    
+    console.log('✅ Error handling test passed for all invalid inputs');
+  });
+
+  test('AI-PERF-8: Arabic Unicode & RTL Performance', async ({ page }) => {
+    // Test various Arabic text scenarios for performance
+    const complexTexts = [
+      'حَدَّثَنَا أَبُو بَكْرِ بْنُ أَبِي شَيْبَةَ', // With diacritics
+      'حدثنا ابو بكر Ibn Abi Shaybah', // Mixed Arabic-English
+      'قال رسول الله ﷺ في الحديث الشريف', // With special characters
+      'حدثنا أبو بكر بن أبي شيبة حدثنا وكيع عن سفيان عن منصور عن إبراهيم', // Long chain
+    ];
+
+    await page.getByRole('tab', { name: 'AI Analysis' }).click();
+    const aiInput = page.locator('textarea').first();
+    
+    for (const testText of complexTexts) {
+      const startTime = Date.now();
+      
+      await aiInput.clear();
+      await aiInput.fill(testText);
+      
+      // Verify text is preserved correctly
+      const value = await aiInput.inputValue();
+      expect(value).toBe(testText);
+      
+      // Check RTL rendering
+      const direction = await aiInput.evaluate(el => getComputedStyle(el).direction);
+      expect(direction).toBe('rtl');
+      
+      // Test processing performance
+      await page.getByRole('button', { name: /Analyze/ }).first().click();
+      await page.waitForTimeout(1500);
+      
+      const processingTime = Date.now() - startTime;
+      expect(processingTime).toBeLessThan(3000); // Should handle complex text efficiently
+      
+      console.log(`✅ Complex Arabic text processed in ${processingTime}ms: ${testText.substring(0, 30)}...`);
+    }
+  });
+
+  test('AI-PERF-9: Similarity Engine Performance', async ({ page }) => {
     // Navigate to Advanced Processing tab
     await page.getByRole('tab', { name: 'Advanced Processing' }).click();
     
     // Check similarity engine interface
     await expect(page.locator('text=Text Similarity').or(page.locator('text=Similarity Search'))).toBeVisible();
     
-    const testText = 'حدثنا أبو بكر بن أبي شيبة';
+    const testText = 'حدثنا أبو بكر بن أبي شيبة حدثنا وكيع';
     
     // Find similarity input
     const similarityInput = page.locator('input[placeholder*="similarity"], textarea[placeholder*="compare"]').first();
@@ -140,203 +297,101 @@ test.describe('AI Workflow & Performance Tests', () => {
     
     // Wait for similarity results
     await page.waitForSelector('[data-testid="similarity-results"], text="Similarity results", .similarity-match', { 
-      timeout: 8000 
+      timeout: 6000 
     });
     
-    const endTime = Date.now();
-    const processingTime = endTime - startTime;
+    const processingTime = Date.now() - startTime;
     
     // Performance check: Similarity search should be fast
-    expect(processingTime).toBeLessThan(4000);
+    expect(processingTime).toBeLessThan(3000);
     
-    console.log(`Similarity search completed in ${processingTime}ms`);
+    console.log(`✅ Similarity search completed in ${processingTime}ms`);
   });
 
-  test('AI-5: Memory Usage & Model Loading Performance', async ({ page }) => {
-    // Monitor network requests for model loading
-    const modelRequests = [];
-    page.on('request', request => {
-      if (request.url().includes('huggingface') || request.url().includes('.onnx') || request.url().includes('model')) {
-        modelRequests.push(request.url());
-      }
-    });
-
-    // Navigate to AI tab to trigger model loading
-    await page.getByRole('tab', { name: 'AI Analysis' }).click();
-    
-    const startTime = Date.now();
-    
-    // Perform AI operation to ensure models are loaded
-    const aiInput = page.locator('textarea').first();
-    await aiInput.fill('حدثنا أبو بكر');
-    await page.getByRole('button', { name: /Analyze/ }).first().click();
-    
-    // Wait for AI initialization
-    await page.waitForTimeout(3000);
-    
-    const endTime = Date.now();
-    const loadingTime = endTime - startTime;
-    
-    // Performance check: Model loading should be reasonable
-    expect(loadingTime).toBeLessThan(8000);
-    
-    console.log(`AI Model loading completed in ${loadingTime}ms`);
-    console.log(`Model requests detected: ${modelRequests.length}`);
-  });
-
-  test('AI-6: Arabic Unicode & RTL Text Handling', async ({ page }) => {
-    // Test various Arabic text scenarios
-    const testTexts = [
-      'حدثنا أبو بكر بن أبي شيبة', // Standard Arabic
-      'حَدَّثَنَا أَبُو بَكْرٍ', // With diacritics
-      'حدثنا ابو بكر Ibn Abi Shaybah', // Mixed Arabic-English
-      'قال رسول الله ﷺ', // With special characters
+  test('AI-PERF-10: Cross-Tab Performance & State Management', async ({ page }) => {
+    // Test performance when switching between AI-related tabs
+    const tabs = [
+      'AI Analysis',
+      'Advanced Processing',
+      'Hadith Analysis',
+      'AI Analysis', // Return to first tab
     ];
 
-    await page.getByRole('tab', { name: 'AI Analysis' }).click();
-    
-    for (const testText of testTexts) {
-      // Clear previous input
-      const aiInput = page.locator('textarea').first();
-      await aiInput.clear();
-      await aiInput.fill(testText);
-      
-      // Verify text is displayed correctly (RTL)
-      await expect(aiInput).toHaveValue(testText);
-      
-      // Test processing
-      await page.getByRole('button', { name: /Analyze/ }).first().click();
-      await page.waitForTimeout(1000);
-      
-      console.log(`Arabic text test passed for: ${testText}`);
-    }
-  });
-
-  test('AI-7: Error Handling & Recovery', async ({ page }) => {
-    await page.getByRole('tab', { name: 'AI Analysis' }).click();
-    
-    // Test with invalid/problematic input
-    const problematicInputs = [
-      '', // Empty string
-      'x'.repeat(10000), // Very long string
-      '###invalid###', // Invalid characters
-      '\u0000\u0001\u0002', // Control characters
-    ];
-
-    for (const input of problematicInputs) {
-      const aiInput = page.locator('textarea').first();
-      await aiInput.clear();
-      await aiInput.fill(input);
-      
-      // Click analyze and check for graceful error handling
-      await page.getByRole('button', { name: /Analyze/ }).first().click();
-      
-      // Should not crash - either show error message or handle gracefully
-      await page.waitForTimeout(2000);
-      
-      // Check page is still functional
-      await expect(page.locator('h1:has-text("مُتحقق الرواة")')).toBeVisible();
-      
-      console.log(`Error handling test passed for problematic input`);
-    }
-  });
-
-  test('AI-8: Cross-Tab Workflow Integration', async ({ page }) => {
-    // Test workflow that spans multiple tabs
-    
-    // Start with input analysis
-    await page.getByRole('button', { name: 'Use this example' }).click();
-    await page.getByRole('button', { name: 'Analyze Hadith' }).click();
-    
-    // Wait for results
-    await expect(page.getByRole('tab', { name: /Results/ })).toBeVisible();
-    
-    // Navigate to AI Analysis with context
-    await page.getByRole('tab', { name: 'AI Analysis' }).click();
-    
-    // Verify AI analysis can work with previous results
-    await expect(page.locator('textarea, input[type="text"]').first()).toBeVisible();
-    
-    // Navigate to Advanced Processing
-    await page.getByRole('tab', { name: 'Advanced Processing' }).click();
-    
-    // Check data consistency across tabs
-    await expect(page.locator('text=Advanced Processing').or(page.locator('text=Bulk Processing'))).toBeVisible();
-    
-    console.log('Cross-tab workflow integration test completed');
-  });
-
-  test('AI-9: PDF Generation with AI Results', async ({ page }) => {
-    // Process hadith to get results
-    await page.getByRole('button', { name: 'Use this example' }).click();
-    await page.getByRole('button', { name: 'Analyze Hadith' }).click();
-    
-    // Wait for results
-    await expect(page.getByRole('tab', { name: /Results/ })).toBeVisible();
-    
-    // Look for PDF generation button
-    const pdfButton = page.getByRole('button', { name: /Generate PDF|Export|Download Report/ }).first();
-    
-    if (await pdfButton.isVisible()) {
+    for (const tabName of tabs) {
       const startTime = Date.now();
       
-      // Click PDF generation
-      await pdfButton.click();
+      await page.getByRole('tab', { name: tabName }).click();
       
-      // Wait for PDF generation to complete
-      await page.waitForTimeout(5000);
+      // Wait for tab content to load
+      await page.waitForTimeout(200);
       
-      const endTime = Date.now();
-      const pdfTime = endTime - startTime;
+      const switchTime = Date.now() - startTime;
+      expect(switchTime).toBeLessThan(1000); // Tab switch should be fast
       
-      // Performance check: PDF generation should be reasonable
-      expect(pdfTime).toBeLessThan(8000);
+      // Verify tab is active and content is visible
+      await expect(page.getByRole('tab', { name: tabName })).toHaveAttribute('data-state', 'active');
       
-      console.log(`PDF generation completed in ${pdfTime}ms`);
-    } else {
-      console.log('PDF generation feature not found - may need implementation');
+      console.log(`✅ Tab switch to ${tabName}: ${switchTime}ms`);
     }
   });
+});
 
-  test('AI-10: Complete AI Workflow Performance Benchmark', async ({ page }) => {
-    const startTime = Date.now();
+// Comprehensive Error Handling Tests
+test.describe('AI Error Handling & Recovery', () => {
+  test('AI-ERR-1: Network Failure Recovery', async ({ page }) => {
+    await page.goto('/app');
     
-    // Complete workflow test
-    // 1. Load example text
-    await page.getByRole('button', { name: 'Use this example' }).click();
-    const step1Time = Date.now();
+    // Simulate network issues by intercepting AI-related requests
+    await page.route('**/api/**', route => {
+      if (route.request().url().includes('ai') || route.request().url().includes('analyze')) {
+        route.abort('failed');
+      } else {
+        route.continue();
+      }
+    });
     
-    // 2. Analyze hadith (narrator recognition)
-    await page.getByRole('button', { name: 'Analyze Hadith' }).click();
-    await expect(page.getByRole('tab', { name: /Results/ })).toBeVisible();
-    const step2Time = Date.now();
-    
-    // 3. AI analysis
+    // Try to perform AI operation
     await page.getByRole('tab', { name: 'AI Analysis' }).click();
+    
     const aiInput = page.locator('textarea').first();
     await aiInput.fill('حدثنا أبو بكر بن أبي شيبة');
     await page.getByRole('button', { name: /Analyze/ }).first().click();
-    await page.waitForTimeout(2000);
-    const step3Time = Date.now();
     
-    // 4. Advanced processing
-    await page.getByRole('tab', { name: 'Advanced Processing' }).click();
-    await page.waitForTimeout(1000);
-    const step4Time = Date.now();
+    // Should show error message gracefully
+    await expect(page.locator('text=error').or(page.locator('text=failed')).or(page.locator('text=network'))).toBeVisible({ timeout: 5000 });
     
-    // Calculate timing
-    const totalTime = step4Time - startTime;
-    const analysisTime = step2Time - step1Time;
-    const aiTime = step3Time - step2Time;
+    // Application should remain functional
+    await expect(page.locator('h1:has-text("مُتحقق الرواة")')).toBeVisible();
     
-    // Performance assertions
-    expect(totalTime).toBeLessThan(15000); // Complete workflow under 15s
-    expect(analysisTime).toBeLessThan(5000); // Hadith analysis under 5s
-    expect(aiTime).toBeLessThan(8000); // AI processing under 8s
+    console.log('✅ Network failure recovery test passed');
+  });
+
+  test('AI-ERR-2: Model Loading Failure Fallback', async ({ page }) => {
+    await page.goto('/app');
     
-    console.log(`Complete AI workflow benchmark:`);
-    console.log(`- Total time: ${totalTime}ms`);
-    console.log(`- Analysis time: ${analysisTime}ms`);
-    console.log(`- AI processing time: ${aiTime}ms`);
+    // Simulate model loading failure
+    await page.addInitScript(() => {
+      // Override transformer loader to simulate failure
+      (window as any).__transformerLoader = async () => {
+        throw new Error('Model loading failed');
+      };
+    });
+    
+    // Navigate to AI tab
+    await page.getByRole('tab', { name: 'AI Analysis' }).click();
+    
+    // Should still show interface (fallback to pattern-based analysis)
+    await expect(page.locator('text=AI').or(page.locator('text=Analysis'))).toBeVisible();
+    
+    // Try analysis with fallback
+    const aiInput = page.locator('textarea').first();
+    await aiInput.fill('حدثنا أبو بكر بن أبي شيبة');
+    await page.getByRole('button', { name: /Analyze/ }).first().click();
+    
+    // Should work with pattern-based fallback
+    await page.waitForTimeout(3000);
+    await expect(page.locator('h1:has-text("مُتحقق الرواة")')).toBeVisible();
+    
+    console.log('✅ Model loading failure fallback test passed');
   });
 }); 

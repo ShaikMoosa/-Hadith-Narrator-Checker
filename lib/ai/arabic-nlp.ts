@@ -1,30 +1,62 @@
 /**
  * Advanced Arabic NLP Engine for Hadith Analysis
  * Uses Hugging Face Transformers for narrator recognition and text processing
- * Enhanced with production-ready error handling and monitoring
+ * Enhanced with production-ready error handling, caching, and performance optimization
  */
+
+// Global model cache to prevent re-loading
+let globalModelCache: {
+  embeddingPipeline?: any;
+  initialized?: boolean;
+  initPromise?: Promise<any>;
+} = {};
 
 // Configure transformer.js environment for browser compatibility
 if (typeof window !== 'undefined') {
   // Browser environment - use dynamic imports with better error handling
   const initializeTransformers = async () => {
     try {
-      const { pipeline, env } = await import('@xenova/transformers');
-      
-      // Configure environment for better CSP compatibility
-      env.allowRemoteModels = true;
-      env.allowLocalModels = false;
-      
-      // Use more reliable CDN paths with fallbacks
-      env.backends.onnx.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.14.0/dist/';
-      
-      // Configure for better Windows compatibility
-      env.backends.onnx.wasm.numThreads = Math.min(navigator.hardwareConcurrency || 4, 4);
-      env.backends.onnx.wasm.simd = true;
-      
-      return { pipeline, env };
+      // Check if already cached
+      if (globalModelCache.embeddingPipeline) {
+        console.log('[AI] Using cached models');
+        return { 
+          pipeline: (window as any).__cachedPipeline,
+          env: (window as any).__cachedEnv 
+        };
+      }
+
+      // Check if initialization is already in progress
+      if (globalModelCache.initPromise) {
+        console.log('[AI] Waiting for ongoing initialization...');
+        return await globalModelCache.initPromise;
+      }
+
+      // Start new initialization
+      globalModelCache.initPromise = (async () => {
+        const { pipeline, env } = await import('@xenova/transformers');
+        
+        // Configure environment for better CSP compatibility
+        env.allowRemoteModels = true;
+        env.allowLocalModels = false;
+        
+        // Use more reliable CDN paths with fallbacks
+        env.backends.onnx.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.14.0/dist/';
+        
+        // Configure for better Windows compatibility and performance
+        env.backends.onnx.wasm.numThreads = Math.min(navigator.hardwareConcurrency || 2, 2); // Reduced threads
+        env.backends.onnx.wasm.simd = true;
+        
+        // Cache for reuse
+        (window as any).__cachedPipeline = pipeline;
+        (window as any).__cachedEnv = env;
+        
+        return { pipeline, env };
+      })();
+
+      return await globalModelCache.initPromise;
     } catch (error) {
       console.warn('[AI] Failed to load transformers, falling back to pattern-based analysis:', error);
+      globalModelCache.initPromise = undefined; // Reset for retry
       return null;
     }
   };
@@ -58,6 +90,8 @@ interface AIPerformanceMetrics {
   memoryUsage: number;
   errorCount: number;
   retryCount: number;
+  cacheHits: number;
+  cacheMisses: number;
 }
 
 interface NarratorEntity {
@@ -86,6 +120,13 @@ interface SemanticSimilarityResult {
   processingTime: number;
 }
 
+// Result cache for expensive operations
+const resultCache = new Map<string, {
+  result: any;
+  timestamp: number;
+  ttl: number;
+}>();
+
 class ArabicNLPEngine {
   private nerPipeline: any = null;
   private embeddingPipeline: any = null;
@@ -97,18 +138,20 @@ class ArabicNLPEngine {
     analysisTime: 0,
     memoryUsage: 0,
     errorCount: 0,
-    retryCount: 0
+    retryCount: 0,
+    cacheHits: 0,
+    cacheMisses: 0
   };
 
   private retryConfig: RetryConfig = {
-    maxRetries: 3,
-    baseDelay: 1000,
-    maxDelay: 10000,
-    backoffMultiplier: 2
+    maxRetries: 2, // Reduced retries for faster failure
+    baseDelay: 500, // Reduced delay
+    maxDelay: 3000, // Reduced max delay
+    backoffMultiplier: 1.5
   };
 
   /**
-   * Initialize all AI models for Arabic text processing with enhanced error handling
+   * Initialize AI models with aggressive caching and performance optimization
    */
   async initialize(): Promise<void> {
     if (!this.isBrowser) {
@@ -117,64 +160,80 @@ class ArabicNLPEngine {
       return;
     }
 
+    // Check if already initialized globally
+    if (globalModelCache.initialized && globalModelCache.embeddingPipeline) {
+      console.log('[AI] Using globally cached models');
+      this.embeddingPipeline = globalModelCache.embeddingPipeline;
+      this.initialized = true;
+      this.performanceMetrics.cacheHits++;
+      return;
+    }
+
     const startTime = performance.now();
 
     try {
-      console.log('[AI] Initializing Arabic NLP engine in browser...');
+      console.log('[AI] Initializing Arabic NLP engine with performance optimization...');
       
-      // Check browser compatibility
-      await this.checkBrowserCompatibility();
+      // Quick browser compatibility check (non-blocking)
+      this.quickCompatibilityCheck();
       
-      // Dynamically import transformers in browser only
-      const { pipeline } = await this.executeWithRetry(
+      // Load transformers with timeout and caching
+      const transformerResult = await this.executeWithTimeout(
         async () => await (window as any).__transformerLoader(),
-        { maxRetries: 2, baseDelay: 2000, maxDelay: 5000, backoffMultiplier: 1.5 }
+        8000, // Reduced timeout
+        'Model loading timeout - using pattern-based analysis'
       );
-      
-      // Load models with memory monitoring
-      await this.initializeModelsWithMonitoring(pipeline);
+
+      if (transformerResult?.pipeline) {
+        // Load only essential model with aggressive optimization
+        await this.initializeOptimizedModels(transformerResult.pipeline);
+        globalModelCache.initialized = true;
+      } else {
+        console.warn('[AI] Transformers not available, using pattern-based analysis only');
+        this.initialized = true;
+        return;
+      }
 
       this.performanceMetrics.modelLoadTime = performance.now() - startTime;
       this.initialized = true;
       
-      console.log(`[AI] Arabic NLP engine initialized successfully in ${this.performanceMetrics.modelLoadTime.toFixed(2)}ms`);
-      this.logPerformanceMetrics();
+      console.log(`[AI] Arabic NLP engine initialized in ${this.performanceMetrics.modelLoadTime.toFixed(2)}ms`);
       
     } catch (error) {
-      this.handleInitializationError(error);
+      console.warn('[AI] Initialization failed, falling back to pattern-based analysis:', error);
+      this.initialized = true; // Still mark as initialized for pattern-based fallback
+      this.performanceMetrics.errorCount++;
     }
   }
 
   /**
-   * Check browser compatibility for AI features
+   * Quick compatibility check without blocking
    */
-  private async checkBrowserCompatibility(): Promise<void> {
+  private quickCompatibilityCheck(): void {
     if (!window.WebAssembly) {
-      throw this.createAIError('initialization', 'WebAssembly not supported', null, false, 
-        'Your browser does not support WebAssembly. Please update to a modern browser.');
+      console.warn('[AI] WebAssembly not supported, using pattern-based analysis only');
     }
 
     if (!navigator.onLine) {
-      throw this.createAIError('network', 'No internet connection', null, true,
-        'Internet connection required to load AI models. Please check your connection.');
-    }
-
-    // Check available memory (rough estimate)
-    const memoryInfo = (performance as any).memory;
-    if (memoryInfo && memoryInfo.usedJSHeapSize > memoryInfo.totalJSHeapSize * 0.8) {
-      console.warn('[AI] High memory usage detected, AI performance may be affected');
+      console.warn('[AI] Offline mode detected, using cached models or pattern-based analysis');
     }
   }
 
   /**
-   * Initialize models with memory monitoring
+   * Initialize models with aggressive optimization for performance
    */
-  private async initializeModelsWithMonitoring(pipeline: any): Promise<void> {
+  private async initializeOptimizedModels(pipeline: any): Promise<void> {
     try {
-      // Monitor memory before model loading
+      // Check if model is already cached globally
+      if (globalModelCache.embeddingPipeline) {
+        this.embeddingPipeline = globalModelCache.embeddingPipeline;
+        this.performanceMetrics.cacheHits++;
+        return;
+      }
+
       const initialMemory = this.getMemoryUsage();
       
-      // Load only the most essential models for browser compatibility
+      // Load only the most essential model with aggressive optimization
       this.embeddingPipeline = await this.executeWithTimeout(
         () => pipeline(
           'feature-extraction',
@@ -182,95 +241,346 @@ class ArabicNLPEngine {
           { 
             quantized: true,
             device: 'cpu',
-            dtype: 'fp32'
+            dtype: 'fp16', // Use half precision for better performance
+            cache_dir: './.cache/transformers', // Enable caching
+            local_files_only: false,
+            revision: 'main'
           }
         ),
-        30000, // 30 second timeout
-        'Model loading timeout - please refresh and try again'
+        15000, // Reduced timeout
+        'Model loading timeout'
       );
 
-      // Monitor memory after model loading
+      // Cache globally for reuse
+      globalModelCache.embeddingPipeline = this.embeddingPipeline;
+      
       const finalMemory = this.getMemoryUsage();
       this.performanceMetrics.memoryUsage = finalMemory - initialMemory;
+      this.performanceMetrics.cacheMisses++;
       
-      console.log(`[AI] Model loaded, memory usage: ${(this.performanceMetrics.memoryUsage / 1024 / 1024).toFixed(2)}MB`);
+      console.log(`[AI] Model loaded and cached, memory: ${(this.performanceMetrics.memoryUsage / 1024 / 1024).toFixed(2)}MB`);
       
     } catch (error) {
-      throw this.createAIError('initialization', 'Model loading failed', error, true,
-        'Failed to load AI models. This may be due to network issues or browser limitations.');
+      console.warn('[AI] Model loading failed, using pattern-based analysis:', error);
+      throw error;
     }
   }
 
   /**
-   * Ensure AI engine is initialized with graceful error handling
+   * Get cached result or compute new one
    */
-  private async ensureInitialized(): Promise<void> {
-    if (!this.initialized) {
-      await this.initialize();
+  private getCachedResult<T>(key: string, computeFn: () => Promise<T>, ttlMs: number = 300000): Promise<T> {
+    const cached = resultCache.get(key);
+    const now = Date.now();
+    
+    if (cached && (now - cached.timestamp) < cached.ttl) {
+      this.performanceMetrics.cacheHits++;
+      return Promise.resolve(cached.result);
     }
+    
+    this.performanceMetrics.cacheMisses++;
+    return computeFn().then(result => {
+      resultCache.set(key, {
+        result,
+        timestamp: now,
+        ttl: ttlMs
+      });
+      
+      // Clean old cache entries
+      if (resultCache.size > 100) {
+        const entries = Array.from(resultCache.entries());
+        entries.sort((a, b) => a[1].timestamp - b[1].timestamp);
+        entries.slice(0, 20).forEach(([k]) => resultCache.delete(k));
+      }
+      
+      return result;
+    });
   }
 
   /**
-   * Extract narrators from Arabic text with enhanced error handling
+   * Extract narrators from Arabic text with enhanced caching and performance optimization
    */
   async extractNarrators(text: string): Promise<NarratorEntity[]> {
     try {
-      await this.ensureInitialized();
-      
-      // Input validation
+      // Input validation with early return
       if (!text || typeof text !== 'string' || text.trim().length === 0) {
         console.warn('[AI] Empty or invalid text provided for narrator extraction');
         return [];
       }
 
-      const startTime = performance.now();
-      const results: NarratorEntity[] = [];
+      // Normalize text for consistent caching
+      const normalizedText = this.normalizeArabicText(text.trim());
+      const cacheKey = `narrators:${normalizedText.substring(0, 100)}:${normalizedText.length}`;
 
-      try {
-        // Pattern-based extraction (always available as fallback)
-        const patternResults = await this.executeWithTimeout(
-          () => this.extractNarratorsUsingPatterns(text),
-          5000,
-          'Pattern-based extraction timeout'
-        );
-        
-        results.push(...patternResults);
+      // Try to get cached result first
+      return await this.getCachedResult(
+        cacheKey,
+        async () => {
+          await this.ensureInitialized();
+          
+          const startTime = performance.now();
+          const results: NarratorEntity[] = [];
 
-        // AI-based enhancement (if available)
-        if (this.embeddingPipeline) {
           try {
-            const aiResults = await this.enhanceNarratorExtractionWithAI(text, patternResults);
-            // Merge and deduplicate results
-            results.push(...aiResults.filter(ai => 
-              !results.some(pattern => 
-                Math.abs(ai.startPosition - pattern.startPosition) < 5
-              )
-            ));
-          } catch (aiError) {
-            console.warn('[AI] AI enhancement failed, using pattern-based results only:', aiError);
-            // Continue with pattern-based results - don't fail the entire operation
+            // Always start with fast pattern-based extraction
+            const patternResults = await this.executeWithTimeout(
+              () => this.extractNarratorsUsingPatterns(normalizedText),
+              2000, // Reduced timeout for patterns
+              'Pattern extraction timeout'
+            );
+            
+            results.push(...patternResults);
+
+            // AI enhancement only if models are available and text is complex enough
+            if (this.embeddingPipeline && normalizedText.length > 50 && patternResults.length > 0) {
+              try {
+                const aiResults = await this.executeWithTimeout(
+                  () => this.enhanceNarratorExtractionWithAI(normalizedText, patternResults),
+                  3000, // Reduced AI timeout
+                  'AI enhancement timeout'
+                );
+                
+                // Merge unique AI results
+                const uniqueAiResults = aiResults.filter(ai => 
+                  !results.some(pattern => 
+                    Math.abs(ai.startPosition - pattern.startPosition) < 3 ||
+                    ai.name.toLowerCase() === pattern.name.toLowerCase()
+                  )
+                );
+                results.push(...uniqueAiResults);
+              } catch (aiError) {
+                console.warn('[AI] AI enhancement failed, using pattern results:', aiError);
+                // Continue with pattern-based results
+              }
+            }
+
+            const processingTime = performance.now() - startTime;
+            this.performanceMetrics.analysisTime = processingTime;
+            
+            const finalResults = this.validateAndSortResults(results);
+            console.log(`[AI] Extracted ${finalResults.length} narrators in ${processingTime.toFixed(2)}ms`);
+            
+            return finalResults;
+
+          } catch (processingError) {
+            console.error('[AI] Error during narrator extraction, using fallback:', processingError);
+            return await this.fallbackNarratorExtraction(normalizedText);
           }
-        }
-
-        const processingTime = performance.now() - startTime;
-        this.performanceMetrics.analysisTime = processingTime;
-        
-        console.log(`[AI] Extracted ${results.length} narrators in ${processingTime.toFixed(2)}ms`);
-        return this.validateAndSortResults(results);
-
-      } catch (processingError) {
-        // If processing fails, try to provide partial results
-        console.error('[AI] Error during narrator extraction, attempting fallback:', processingError);
-        return await this.fallbackNarratorExtraction(text);
-      }
+        },
+        180000 // 3 minute cache TTL
+      );
 
     } catch (error) {
       this.performanceMetrics.errorCount++;
       console.error('[AI] Critical error in narrator extraction:', error);
-      
-      // Return empty array rather than throwing - graceful degradation
       return [];
     }
+  }
+
+  /**
+   * Fast pattern-based narrator extraction with optimized regex
+   */
+  async extractNarratorsUsingPatterns(text: string): Promise<NarratorEntity[]> {
+    const results: NarratorEntity[] = [];
+    
+    // Optimized patterns for common narrator introductions
+    const patterns = [
+      // Primary patterns (most common)
+      { regex: /حدثنا\s+([^،\s]+(?:\s+[^،\s]+){0,3})/g, confidence: 0.9 },
+      { regex: /أخبرنا\s+([^،\s]+(?:\s+[^،\s]+){0,3})/g, confidence: 0.85 },
+      { regex: /حدثني\s+([^،\s]+(?:\s+[^،\s]+){0,3})/g, confidence: 0.85 },
+      
+      // Secondary patterns
+      { regex: /عن\s+([^،\s]+(?:\s+[^،\s]+){0,2})/g, confidence: 0.7 },
+      { regex: /قال\s+([^،\s]+(?:\s+[^،\s]+){0,2})/g, confidence: 0.6 },
+      
+      // Specific narrator patterns
+      { regex: /(أبو\s+[^،\s]+(?:\s+[^،\s]+){0,2})/g, confidence: 0.8 },
+      { regex: /(ابن\s+[^،\s]+(?:\s+[^،\s]+){0,2})/g, confidence: 0.75 },
+      { regex: /(عبد\s+الله\s+[^،\s]+)/g, confidence: 0.8 },
+      { regex: /(عبد\s+الرحمن\s+[^،\s]+)/g, confidence: 0.8 }
+    ];
+
+    // Process patterns efficiently
+    for (const { regex, confidence } of patterns) {
+      let match;
+      const regexCopy = new RegExp(regex.source, regex.flags);
+      
+      while ((match = regexCopy.exec(text)) !== null) {
+        const name = match[1]?.trim();
+        if (name && name.length > 2 && name.length < 50) {
+          results.push({
+            name,
+            confidence,
+            startPosition: match.index,
+            endPosition: match.index + match[0].length,
+            type: this.classifyNarratorType(name)
+          });
+        }
+      }
+    }
+
+    return this.removeDuplicateNarrators(results);
+  }
+
+  /**
+   * Generate embeddings with caching for performance
+   */
+  async generateEmbedding(text: string): Promise<number[]> {
+    if (!text || text.trim().length === 0) {
+      return this.generateSimpleEmbedding(text);
+    }
+
+    const normalizedText = this.normalizeArabicText(text.trim());
+    const cacheKey = `embedding:${normalizedText}`;
+
+    return await this.getCachedResult(
+      cacheKey,
+      async () => {
+        try {
+          await this.ensureInitialized();
+          
+          if (!this.embeddingPipeline) {
+            return this.generateSimpleEmbedding(normalizedText);
+          }
+
+          const startTime = performance.now();
+          
+          // Generate embedding with timeout
+          const result = await this.executeWithTimeout(
+            async () => {
+              const output = await this.embeddingPipeline(normalizedText, {
+                pooling: 'mean',
+                normalize: true
+              });
+              return Array.from(output.data);
+            },
+            5000, // 5 second timeout
+            'Embedding generation timeout'
+          );
+
+          const processingTime = performance.now() - startTime;
+          console.log(`[AI] Generated embedding in ${processingTime.toFixed(2)}ms`);
+          
+          return result;
+
+        } catch (error) {
+          console.warn('[AI] Embedding generation failed, using simple embedding:', error);
+          return this.generateSimpleEmbedding(normalizedText);
+        }
+      },
+      600000 // 10 minute cache TTL for embeddings
+    );
+  }
+
+  /**
+   * Calculate semantic similarity with caching
+   */
+  async calculateSemanticSimilarity(text1: string, text2: string): Promise<SemanticSimilarityResult> {
+    const normalizedText1 = this.normalizeArabicText(text1.trim());
+    const normalizedText2 = this.normalizeArabicText(text2.trim());
+    
+    // Create cache key (order independent)
+    const cacheKey = normalizedText1 < normalizedText2 
+      ? `similarity:${normalizedText1}:${normalizedText2}`
+      : `similarity:${normalizedText2}:${normalizedText1}`;
+
+    return await this.getCachedResult(
+      cacheKey,
+      async () => {
+        const startTime = performance.now();
+        
+        try {
+          // Generate embeddings in parallel for better performance
+          const [embedding1, embedding2] = await Promise.all([
+            this.generateEmbedding(normalizedText1),
+            this.generateEmbedding(normalizedText2)
+          ]);
+
+          const similarity = this.cosineSimilarity(embedding1, embedding2);
+          const processingTime = performance.now() - startTime;
+
+          return {
+            similarity,
+            embedding1,
+            embedding2,
+            processingTime
+          };
+
+        } catch (error) {
+          console.warn('[AI] Similarity calculation failed:', error);
+          
+          // Fallback to simple text similarity
+          const similarity = this.simpleTextSimilarity(normalizedText1, normalizedText2);
+          return {
+            similarity,
+            embedding1: [],
+            embedding2: [],
+            processingTime: performance.now() - startTime
+          };
+        }
+      },
+      300000 // 5 minute cache TTL
+    );
+  }
+
+  /**
+   * Simple text similarity fallback
+   */
+  private simpleTextSimilarity(text1: string, text2: string): number {
+    const words1 = new Set(text1.split(/\s+/));
+    const words2 = new Set(text2.split(/\s+/));
+    
+    const intersection = new Set([...words1].filter(x => words2.has(x)));
+    const union = new Set([...words1, ...words2]);
+    
+    return union.size > 0 ? intersection.size / union.size : 0;
+  }
+
+  /**
+   * Simple embedding fallback using text characteristics
+   */
+  private generateSimpleEmbedding(text: string): number[] {
+    const normalized = this.normalizeArabicText(text);
+    const words = normalized.split(/\s+/);
+    const embedding: number[] = [];
+    
+    // Initialize with zeros
+    for (let i = 0; i < 128; i++) {
+      embedding[i] = 0;
+    }
+    
+    // Simple feature extraction
+    embedding[0] = words.length / 100; // Length feature
+    embedding[1] = (text.match(/[\u0600-\u06FF]/g) || []).length / text.length; // Arabic ratio
+    embedding[2] = (text.match(/حدثنا|أخبرنا|قال/g) || []).length; // Hadith indicators
+    
+    // Fill remaining with character frequency features
+    for (let i = 3; i < embedding.length; i++) {
+      const char = String.fromCharCode(0x0600 + (i - 3));
+      embedding[i] = (text.match(new RegExp(char, 'g')) || []).length / text.length;
+    }
+    
+    return embedding;
+  }
+
+  /**
+   * Manual cosine similarity calculation
+   */
+  private cosineSimilarity(a: number[], b: number[]): number {
+    if (a.length !== b.length) return 0;
+    
+    let dotProduct = 0;
+    let normA = 0;
+    let normB = 0;
+    
+    for (let i = 0; i < a.length; i++) {
+      dotProduct += a[i] * b[i];
+      normA += a[i] * a[i];
+      normB += b[i] * b[i];
+    }
+    
+    return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
   }
 
   /**
@@ -451,56 +761,6 @@ class ArabicNLPEngine {
   }
 
   /**
-   * Extract narrator names using advanced pattern matching
-   */
-  async extractNarratorsUsingPatterns(text: string): Promise<NarratorEntity[]> {
-    await this.ensureInitialized();
-    
-    try {
-      const normalizedText = this.normalizeArabicText(text);
-      const narrators: NarratorEntity[] = [];
-      
-      // Enhanced Arabic narrator patterns
-      const narratorPatterns = [
-        { pattern: /حدثنا\s+([^،.؛]+)/g, confidence: 0.9 },           // "narrated to us"
-        { pattern: /أخبرنا\s+([^،.؛]+)/g, confidence: 0.9 },          // "informed us"
-        { pattern: /حدثني\s+([^،.؛]+)/g, confidence: 0.85 },          // "narrated to me"
-        { pattern: /قال\s+([^،.؛]+)/g, confidence: 0.7 },            // "said"
-        { pattern: /عن\s+([^،.؛]+)/g, confidence: 0.6 },             // "from/about"
-        { pattern: /بن\s+([^،.؛]+)/g, confidence: 0.75 },            // "son of"
-        { pattern: /أبو\s+([^،.؛]+)/g, confidence: 0.8 },            // "father of"
-        { pattern: /أم\s+([^،.؛]+)/g, confidence: 0.8 },             // "mother of"
-      ];
-
-      // Extract using enhanced patterns
-      for (const { pattern, confidence } of narratorPatterns) {
-        let match;
-        const tempPattern = new RegExp(pattern.source, pattern.flags);
-        while ((match = tempPattern.exec(text)) !== null) {
-          const name = match[1].trim();
-          if (name.length > 2 && name.length < 50) {
-            narrators.push({
-              name: name,
-              confidence,
-              startPosition: match.index,
-              endPosition: match.index + match[0].length,
-              type: this.classifyNarratorType(name)
-            });
-          }
-        }
-      }
-
-      // Remove duplicates and sort by confidence
-      const uniqueNarrators = this.removeDuplicateNarrators(narrators);
-      return uniqueNarrators.sort((a, b) => b.confidence - a.confidence);
-
-    } catch (error) {
-      console.error('[AI] Error extracting narrators:', error);
-      return [];
-    }
-  }
-
-  /**
    * Classify narrator type based on name patterns
    */
   private classifyNarratorType(name: string): NarratorEntity['type'] {
@@ -534,145 +794,92 @@ class ArabicNLPEngine {
   }
 
   /**
-   * Generate text embeddings for semantic similarity (browser only)
+   * Enhance narrator extraction with AI models (placeholder for future implementation)
    */
-  async generateEmbedding(text: string): Promise<number[]> {
-    await this.ensureInitialized();
-    
-    if (!this.isBrowser || !this.embeddingPipeline) {
-      // Fallback: simple hash-based embedding for server/non-AI mode
-      return this.generateSimpleEmbedding(text);
-    }
-    
-    try {
-      const normalizedText = this.normalizeArabicText(text);
-      const result = await this.embeddingPipeline(normalizedText, {
-        pooling: 'mean',
-        normalize: true
-      });
-      
-      // Convert tensor to array if needed
-      return Array.isArray(result.data) ? result.data : Array.from(result.data);
-    } catch (error) {
-      console.error('[AI] Error generating embedding, using fallback:', error);
-      return this.generateSimpleEmbedding(text);
+  private async enhanceNarratorExtractionWithAI(text: string, patternResults: NarratorEntity[]): Promise<NarratorEntity[]> {
+    // This is a placeholder for AI enhancement
+    // For now, just return pattern results with slight confidence boost
+    return patternResults.map(result => ({
+      ...result,
+      confidence: Math.min(result.confidence * 1.1, 0.95) // Slight confidence boost
+    }));
+  }
+
+  /**
+   * Validate and sort narrator extraction results
+   */
+  private validateAndSortResults(results: NarratorEntity[]): NarratorEntity[] {
+    return results
+      .filter(result => 
+        result.name && 
+        result.name.length > 0 && 
+        result.confidence > 0.3 &&
+        result.startPosition >= 0 &&
+        result.endPosition > result.startPosition
+      )
+      .sort((a, b) => b.confidence - a.confidence)
+      .slice(0, 20); // Limit to top 20 results
+  }
+
+  /**
+   * Ensure AI engine is initialized with graceful error handling
+   */
+  private async ensureInitialized(): Promise<void> {
+    if (!this.initialized) {
+      await this.initialize();
     }
   }
 
   /**
-   * Simple embedding fallback using text characteristics
-   */
-  private generateSimpleEmbedding(text: string): number[] {
-    const normalized = this.normalizeArabicText(text);
-    const words = normalized.split(/\s+/);
-    const embedding = new Array(128).fill(0);
-    
-    // Simple feature extraction
-    embedding[0] = words.length / 100; // Length feature
-    embedding[1] = (text.match(/[\u0600-\u06FF]/g) || []).length / text.length; // Arabic ratio
-    embedding[2] = (text.match(/حدثنا|أخبرنا|قال/g) || []).length; // Hadith indicators
-    
-    // Fill remaining with character frequency features
-    for (let i = 3; i < embedding.length; i++) {
-      const char = String.fromCharCode(0x0600 + (i - 3));
-      embedding[i] = (text.match(new RegExp(char, 'g')) || []).length / text.length;
-    }
-    
-    return embedding;
-  }
-
-  /**
-   * Calculate semantic similarity between two texts
-   */
-  async calculateSemanticSimilarity(
-    text1: string, 
-    text2: string
-  ): Promise<SemanticSimilarityResult> {
-    const startTime = performance.now();
-    
-    try {
-      const [embedding1, embedding2] = await Promise.all([
-        this.generateEmbedding(text1),
-        this.generateEmbedding(text2)
-      ]);
-
-      // Calculate cosine similarity manually to avoid dependency issues
-      const similarity = this.cosineSimilarity(embedding1, embedding2);
-      const processingTime = performance.now() - startTime;
-
-      return {
-        similarity: Number(similarity.toFixed(4)),
-        embedding1,
-        embedding2,
-        processingTime: Math.round(processingTime)
-      };
-    } catch (error) {
-      console.error('[AI] Error calculating semantic similarity:', error);
-      throw new Error('Failed to calculate semantic similarity');
-    }
-  }
-
-  /**
-   * Manual cosine similarity calculation
-   */
-  private cosineSimilarity(a: number[], b: number[]): number {
-    if (a.length !== b.length) return 0;
-    
-    let dotProduct = 0;
-    let normA = 0;
-    let normB = 0;
-    
-    for (let i = 0; i < a.length; i++) {
-      dotProduct += a[i] * b[i];
-      normA += a[i] * a[i];
-      normB += b[i] * b[i];
-    }
-    
-    return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
-  }
-
-  /**
-   * Perform comprehensive Arabic text analysis
+   * Perform comprehensive Arabic text analysis with caching
    */
   async analyzeText(text: string): Promise<ArabicTextAnalysis> {
-    await this.ensureInitialized();
-    
-    try {
-      const startTime = performance.now();
-      
-      // Parallel processing for efficiency
-      const [narrators, keyTerms] = await Promise.all([
-        this.extractNarrators(text),
-        Promise.resolve(this.extractKeyTerms(text))
-      ]);
+    const normalizedText = this.normalizeArabicText(text.trim());
+    const cacheKey = `analysis:${normalizedText.substring(0, 100)}:${normalizedText.length}`;
 
-      const normalizedText = this.normalizeArabicText(text);
-      const language = this.detectLanguage(text);
-      const readabilityScore = this.calculateReadabilityScore(text);
-      const sentiment = this.analyzeSentiment(text);
-      
-      // Calculate overall confidence based on narrator extraction
-      const confidence = narrators.length > 0 
-        ? narrators.reduce((sum, n) => sum + n.confidence, 0) / narrators.length
-        : 0.5;
+    return await this.getCachedResult(
+      cacheKey,
+      async () => {
+        await this.ensureInitialized();
+        
+        const startTime = performance.now();
+        
+        try {
+          // Parallel processing for efficiency
+          const [narrators, keyTerms] = await Promise.all([
+            this.extractNarrators(text),
+            Promise.resolve(this.extractKeyTerms(text))
+          ]);
 
-      const processingTime = performance.now() - startTime;
-      console.log(`[AI] Text analysis completed in ${Math.round(processingTime)}ms`);
+          const language = this.detectLanguage(text);
+          const readabilityScore = this.calculateReadabilityScore(text);
+          const sentiment = this.analyzeSentiment(text);
+          
+          // Calculate overall confidence based on narrator extraction
+          const confidence = narrators.length > 0 
+            ? narrators.reduce((sum, n) => sum + n.confidence, 0) / narrators.length
+            : 0.5;
 
-      return {
-        normalizedText,
-        narratorEntities: narrators,
-        confidence: Number(confidence.toFixed(3)),
-        language,
-        wordCount: text.split(/\s+/).length,
-        processingTime: Math.round(processingTime),
-        errors: [],
-        warnings: []
-      };
-    } catch (error) {
-      console.error('[AI] Error analyzing text:', error);
-      throw new Error('Failed to analyze text');
-    }
+          const processingTime = performance.now() - startTime;
+          console.log(`[AI] Text analysis completed in ${Math.round(processingTime)}ms`);
+
+          return {
+            normalizedText,
+            narratorEntities: narrators,
+            confidence: Number(confidence.toFixed(3)),
+            language,
+            wordCount: text.split(/\s+/).length,
+            processingTime: Math.round(processingTime),
+            errors: [],
+            warnings: []
+          };
+        } catch (error) {
+          console.error('[AI] Error analyzing text:', error);
+          throw new Error('Failed to analyze text');
+        }
+      },
+      300000 // 5 minute cache TTL
+    );
   }
 
   /**
@@ -743,34 +950,6 @@ class ArabicNLPEngine {
     
     // Simplified readability: lower score = easier to read
     return Math.min(100, Math.max(0, 100 - avgWordsPerSentence * 2));
-  }
-
-  /**
-   * Enhance narrator extraction with AI models (placeholder for future implementation)
-   */
-  private async enhanceNarratorExtractionWithAI(text: string, patternResults: NarratorEntity[]): Promise<NarratorEntity[]> {
-    // This is a placeholder for AI enhancement
-    // For now, just return pattern results with slight confidence boost
-    return patternResults.map(result => ({
-      ...result,
-      confidence: Math.min(result.confidence * 1.1, 0.95) // Slight confidence boost
-    }));
-  }
-
-  /**
-   * Validate and sort narrator extraction results
-   */
-  private validateAndSortResults(results: NarratorEntity[]): NarratorEntity[] {
-    return results
-      .filter(result => 
-        result.name && 
-        result.name.length > 0 && 
-        result.confidence > 0.3 &&
-        result.startPosition >= 0 &&
-        result.endPosition > result.startPosition
-      )
-      .sort((a, b) => b.confidence - a.confidence)
-      .slice(0, 20); // Limit to top 20 results
   }
 }
 
