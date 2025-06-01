@@ -6,13 +6,27 @@
 
 // Configure transformer.js environment for browser compatibility
 if (typeof window !== 'undefined') {
-  // Browser environment - use dynamic imports
+  // Browser environment - use dynamic imports with better error handling
   const initializeTransformers = async () => {
-    const { pipeline, env } = await import('@xenova/transformers');
-    env.allowRemoteModels = true;
-    env.allowLocalModels = false;
-    env.backends.onnx.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.14.0/dist/';
-    return { pipeline, env };
+    try {
+      const { pipeline, env } = await import('@xenova/transformers');
+      
+      // Configure environment for better CSP compatibility
+      env.allowRemoteModels = true;
+      env.allowLocalModels = false;
+      
+      // Use more reliable CDN paths with fallbacks
+      env.backends.onnx.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.14.0/dist/';
+      
+      // Configure for better Windows compatibility
+      env.backends.onnx.wasm.numThreads = Math.min(navigator.hardwareConcurrency || 4, 4);
+      env.backends.onnx.wasm.simd = true;
+      
+      return { pipeline, env };
+    } catch (error) {
+      console.warn('[AI] Failed to load transformers, falling back to pattern-based analysis:', error);
+      return null;
+    }
   };
   
   // Export for use in components

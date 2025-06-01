@@ -14,7 +14,7 @@ const nextConfig: NextConfig = {
         // Apply security headers to all routes
         source: '/(.*)',
         headers: [
-          // Content Security Policy - Strict security for XSS protection
+          // Content Security Policy - Updated for AI model compatibility
           {
             key: 'Content-Security-Policy',
             value: [
@@ -29,7 +29,11 @@ const nextConfig: NextConfig = {
               "form-action 'self'",
               "frame-ancestors 'none'",
               "upgrade-insecure-requests",
-              "block-all-mixed-content"
+              "block-all-mixed-content",
+              // Allow WASM and AI model loading
+              "connect-src 'self' https://cdn.jsdelivr.net https://huggingface.co",
+              "worker-src 'self' blob:",
+              "child-src 'self' blob:"
             ].join('; ')
           },
           // Prevent XSS attacks
@@ -57,7 +61,7 @@ const nextConfig: NextConfig = {
             key: 'Referrer-Policy',
             value: 'strict-origin-when-cross-origin'
           },
-          // Permissions policy for security
+          // Permissions policy for security - Fixed ambient-light-sensor warning
           {
             key: 'Permissions-Policy',
             value: [
@@ -69,15 +73,14 @@ const nextConfig: NextConfig = {
               'magnetometer=()',
               'gyroscope=()',
               'accelerometer=()',
-              'ambient-light-sensor=()',
               'autoplay=(self)',
               'encrypted-media=(self)'
             ].join(', ')
           },
-          // Cross-Origin policies
+          // Cross-Origin policies - Relaxed for AI model loading
           {
             key: 'Cross-Origin-Embedder-Policy',
-            value: 'require-corp'
+            value: 'credentialless'
           },
           {
             key: 'Cross-Origin-Opener-Policy',
@@ -85,34 +88,28 @@ const nextConfig: NextConfig = {
           },
           {
             key: 'Cross-Origin-Resource-Policy',
-            value: 'same-origin'
+            value: 'cross-origin'
           }
         ]
       },
-      {
-        // Special CSP for API routes
-        source: '/api/(.*)',
-        headers: [
-          {
-            key: 'Content-Security-Policy',
-            value: "default-src 'none'; script-src 'none'; object-src 'none'; base-uri 'none';"
-          }
-        ]
-      }
+      // Note: Removed overly restrictive API route CSP that was blocking AI functionality
+      // API routes will inherit the main CSP policy which allows necessary resources
     ];
   },
   
-  // Experimental features configuration
+  // Experimental features configuration - Fixed for Windows compatibility
   experimental: {
-    // Optimize for Windows compatibility
+    // Optimize for Windows compatibility - Removed turbo rules causing issues
     turbo: {
-      rules: {
-        '*.ts': ['typescript-loader'],
-        '*.tsx': ['typescript-loader'],
+      resolveAlias: {
+        // Fix for Windows path resolution
+        '@': './src',
       }
     },
     // Enable for better performance
     optimizePackageImports: ['@radix-ui/react-tabs', '@xenova/transformers'],
+    // Enable for better memory management
+    optimizeServerReact: true,
   },
   
   // Webpack configuration for better compatibility
@@ -124,14 +121,32 @@ const nextConfig: NextConfig = {
         fs: false,
         path: false,
         crypto: false,
+        stream: false,
+        buffer: false,
+      };
+      
+      // Add support for WASM files
+      config.experiments = {
+        ...config.experiments,
+        asyncWebAssembly: true,
+        layers: true,
       };
     }
     
-    // Optimize for Arabic text processing
+    // Optimize for Arabic text processing and WASM
     config.module.rules.push({
-      test: /\.(wasm)$/,
+      test: /\.wasm$/,
       type: 'webassembly/async',
     });
+    
+    // Fix for Windows file watching issues
+    if (dev) {
+      config.watchOptions = {
+        poll: 1000,
+        aggregateTimeout: 300,
+        ignored: ['**/node_modules', '**/.next'],
+      };
+    }
     
     return config;
   },
@@ -144,6 +159,14 @@ const nextConfig: NextConfig = {
   
   // Optimize bundle analyzer
   transpilePackages: ['@xenova/transformers'],
+  
+  // Add Windows-specific optimizations
+  onDemandEntries: {
+    // Period (in ms) where the server will keep pages in the buffer
+    maxInactiveAge: 25 * 1000,
+    // Number of pages that should be kept simultaneously without being disposed
+    pagesBufferLength: 2,
+  },
 };
 
 export default nextConfig;
