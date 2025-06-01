@@ -3,8 +3,10 @@
 import { createPortalSession } from '@/app/actions/stripe';
 import { createSupabaseClient } from '@/utils/supabase/front';
 import { useSession } from 'next-auth/react';
+import { Button } from '@/components/ui/button';
+import { ExternalLink } from 'lucide-react';
 import { useState } from 'react';
-import toast from 'react-hot-toast';
+// import toast from 'react-hot-toast';
 
 export default function PortalButton() {
 	const { data: session } = useSession();
@@ -38,7 +40,7 @@ export default function PortalButton() {
 			}
 		} catch (error) {
 			console.error('Failed to create billing portal session:', error);
-			toast.error(error?.toString() || 'Failed to create billing portal session');
+			// toast.error(error?.toString() || 'Failed to create billing portal session');
 		} finally {
 			setIsLoading(false);
 		}

@@ -3,8 +3,9 @@
 import { refund } from '@/app/actions/stripe';
 import { useSession } from 'next-auth/react';
 import { useState } from 'react';
-import toast from 'react-hot-toast';
+// import toast from 'react-hot-toast';
 import { useRouter } from 'next/navigation';
+import { Button } from '@/components/ui/button';
 
 interface RefundButtonProps {
 	subscriptionId: string;
@@ -31,14 +32,14 @@ export default function RefundButton({ subscriptionId, onSuccess }: RefundButton
 				throw 'Please log in to request a refund.';
 			}
 			await refund(subscriptionId);
-			toast.success('Refund request submitted successfully');
+			// toast.success('Refund request submitted successfully');
 			// Force refresh the page data
 			router.refresh();
 			// Call the onSuccess callback if provided
 			onSuccess?.();
 		} catch (error) {
 			console.log('Failed to request refund:', error);
-			toast.error(error?.toString() || 'Failed to request refund');
+			// toast.error(error?.toString() || 'Failed to request refund');
 			router.refresh();
 		} finally {
 			setIsLoading(false);

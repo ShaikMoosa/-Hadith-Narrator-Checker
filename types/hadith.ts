@@ -73,6 +73,78 @@ export interface DatabaseSearch {
   searched_at: string | null;
 }
 
+// Advanced Processing Types (Phase 5A)
+export interface BulkProcessingJob {
+  id: string;
+  userId: string;
+  status: 'pending' | 'processing' | 'completed' | 'error';
+  totalTexts: number;
+  processedTexts: number;
+  createdAt: string;
+  completedAt?: string;
+  error?: string;
+}
+
+export interface TextSimilarityResult {
+  id: string;
+  text: string;
+  similarity: number;
+  source: 'user_search' | 'canonical_hadith' | 'database_entry';
+  timestamp: string;
+  metadata?: {
+    narratorCount?: number;
+    confidence?: number;
+    sourceReference?: string;
+  };
+}
+
+export interface ProcessingProgress {
+  jobId: string;
+  processed: number;
+  total: number;
+  status: 'pending' | 'processing' | 'completed' | 'error';
+  currentText?: string;
+  timestamp: string;
+  results?: HadithTextAnalysis[];
+  error?: string;
+  estimatedTimeRemaining?: number;
+}
+
+export interface HadithTextAnalysis {
+  originalText: string;
+  normalizedText: string;
+  linguisticFeatures: {
+    length: number;
+    wordCount: number;
+    arabicWordCount: number;
+    englishWordCount: number;
+    hasTraditionalMarkers: boolean;
+    hasNarratorIndicators: boolean;
+    textComplexity: number;
+  };
+  narratorChain: {
+    extractedNames: string[];
+    chainLength: number;
+    hasTraditionalMarkers: boolean;
+    confidence: number;
+  };
+  structuralAnalysis: {
+    hasIsnad: boolean;
+    hasMatn: boolean;
+    structureScore: number;
+    traditionalFormula: boolean;
+  };
+  similarTexts: TextSimilarityResult[];
+  narrators: Narrator[];
+  confidence: number;
+  timestamp: string;
+  metadata?: {
+    processingTime?: number;
+    analysisVersion?: string;
+    warnings?: string[];
+  };
+}
+
 // Search and suggestion types
 export interface SearchSuggestion {
   suggestion: string;
@@ -189,4 +261,38 @@ export interface BookmarkToggleData {
 
 export interface HadithSubmissionData {
   hadithText: string;
+}
+
+// Advanced Processing Component Props (Phase 5A)
+export interface BulkProcessorProps {
+  onProcessingComplete: (results: HadithTextAnalysis[]) => void;
+  onProcessingStart: (jobId: string) => void;
+  maxTexts?: number;
+}
+
+export interface SimilarityEngineProps {
+  sourceText: string;
+  onSimilarityResults: (results: TextSimilarityResult[]) => void;
+  threshold?: number;
+}
+
+export interface ProcessingProgressProps {
+  jobId: string;
+  onProgressUpdate: (progress: ProcessingProgress) => void;
+  pollingInterval?: number;
+}
+
+export interface AnalysisResultsProps {
+  analyses: HadithTextAnalysis[];
+  onExport: (format: 'json' | 'csv' | 'pdf') => void;
+  sortBy?: 'confidence' | 'timestamp' | 'wordCount';
+}
+
+// Export Configuration Types
+export interface ExportConfig {
+  format: 'json' | 'csv' | 'pdf';
+  includeMetadata: boolean;
+  includeNarrators: boolean;
+  includeSimilarTexts: boolean;
+  maxResults?: number;
 } 

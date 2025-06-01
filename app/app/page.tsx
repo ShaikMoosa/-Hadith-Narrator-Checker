@@ -10,8 +10,11 @@ import {
   Users, 
   Search,
   BarChart3,
-  Sparkles
+  Sparkles,
+  Zap,
+  Upload
 } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 
 // Import components
 import HadithInput from '@/components/hadith/HadithInput'
@@ -20,14 +23,21 @@ import NarratorProfile from '@/components/hadith/NarratorProfile'
 import RecentSearches from '@/components/hadith/RecentSearches'
 import AdvancedSearch from '@/components/hadith/AdvancedSearch'
 import StatsDashboard from '@/components/hadith/StatsDashboard'
+import BulkHadithProcessor from '@/components/hadith/BulkHadithProcessor'
+import HadithSimilarityEngine from '@/components/hadith/HadithSimilarityEngine'
 
 // Import actions and types
 import { processHadithText } from '@/app/actions/hadith'
-import type { Narrator, ProcessHadithResponse } from '@/types/hadith'
+import type { 
+  Narrator, 
+  ProcessHadithResponse, 
+  HadithTextAnalysis,
+  TextSimilarityResult 
+} from '@/types/hadith'
 
 /**
  * Main Hadith Narrator Checker Application Page
- * This page integrates all the core components for hadith analysis
+ * This page integrates all the core components for hadith analysis including advanced processing
  */
 export default function HadithApp() {
   // Application state
@@ -36,6 +46,12 @@ export default function HadithApp() {
   const [isProcessing, setIsProcessing] = useState(false)
   const [hadithDetails, setHadithDetails] = useState<ProcessHadithResponse['hadithDetails'] | null>(null)
   const [activeTab, setActiveTab] = useState('input')
+
+  // Advanced processing state
+  const [bulkResults, setBulkResults] = useState<HadithTextAnalysis[]>([])
+  const [currentJobId, setCurrentJobId] = useState<string | null>(null)
+  const [similarityResults, setSimilarityResults] = useState<TextSimilarityResult[]>([])
+  const [selectedAnalysisText, setSelectedAnalysisText] = useState<string>('')
 
   // Handle hadith text processing
   const handleHadithProcess = async (hadithText: string) => {
@@ -85,6 +101,30 @@ export default function HadithApp() {
     setSelectedNarrator(null)
   }
 
+  // Handle bulk processing completion
+  const handleBulkProcessingComplete = (results: HadithTextAnalysis[]) => {
+    setBulkResults(results)
+    console.log(`[INFO] Bulk processing completed with ${results.length} results`)
+  }
+
+  // Handle bulk processing start
+  const handleBulkProcessingStart = (jobId: string) => {
+    setCurrentJobId(jobId)
+    console.log(`[INFO] Bulk processing started with job ID: ${jobId}`)
+  }
+
+  // Handle similarity search results
+  const handleSimilarityResults = (results: TextSimilarityResult[]) => {
+    setSimilarityResults(results)
+    console.log(`[INFO] Similarity search found ${results.length} results`)
+  }
+
+  // Set text for similarity analysis
+  const handleSetSimilarityText = (text: string) => {
+    setSelectedAnalysisText(text)
+    setActiveTab('advanced')
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 p-4" dir="rtl">
       <div className="max-w-7xl mx-auto space-y-6">
@@ -102,7 +142,7 @@ export default function HadithApp() {
           </h2>
           <p className="text-gray-600 max-w-2xl mx-auto" dir="ltr">
             Advanced Islamic scholarship tool for authenticating hadith narrators using classical 
-            methodologies and modern search capabilities.
+            methodologies and modern search capabilities with enhanced AI-powered analysis.
           </p>
           
           {/* Status Indicators */}
@@ -119,6 +159,14 @@ export default function HadithApp() {
               <Search className="h-3 w-3" />
               Advanced Search
             </Badge>
+            <Badge variant="secondary" className="flex items-center gap-1">
+              <Zap className="h-3 w-3" />
+              AI Analysis
+            </Badge>
+            <Badge variant="secondary" className="flex items-center gap-1">
+              <Upload className="h-3 w-3" />
+              Bulk Processing
+            </Badge>
           </div>
         </div>
 
@@ -126,7 +174,7 @@ export default function HadithApp() {
 
         {/* Main Application */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-4" dir="ltr">
+          <TabsList className="grid w-full grid-cols-5" dir="ltr">
             <TabsTrigger value="input" className="flex items-center gap-2">
               <BookOpen className="h-4 w-4" />
               Hadith Analysis
@@ -138,6 +186,10 @@ export default function HadithApp() {
             <TabsTrigger value="results" className="flex items-center gap-2">
               <Users className="h-4 w-4" />
               Results ({narrators.length})
+            </TabsTrigger>
+            <TabsTrigger value="advanced" className="flex items-center gap-2">
+              <Zap className="h-4 w-4" />
+              Advanced Processing
             </TabsTrigger>
             <TabsTrigger value="stats" className="flex items-center gap-2">
               <BarChart3 className="h-4 w-4" />
@@ -157,7 +209,17 @@ export default function HadithApp() {
                 {hadithDetails && (
                   <Card className="mt-6">
                     <CardHeader>
-                      <CardTitle className="text-lg">Analysis Results</CardTitle>
+                      <CardTitle className="text-lg flex items-center justify-between">
+                        Analysis Results
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleSetSimilarityText(hadithDetails.text)}
+                        >
+                          <Zap className="h-4 w-4 mr-1" />
+                          Find Similar
+                        </Button>
+                      </CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-3">
                       <div>
@@ -203,6 +265,7 @@ export default function HadithApp() {
                     onSelectNarrator={handleNarratorSelect}
                   />
                 </div>
+                
                 <div>
                   {selectedNarrator ? (
                     <NarratorProfile 
@@ -211,10 +274,12 @@ export default function HadithApp() {
                     />
                   ) : (
                     <Card>
-                      <CardContent className="text-center py-12">
-                        <Users className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-                        <p className="text-gray-500">
-                          Select a narrator to view detailed profile and scholarly opinions
+                      <CardHeader>
+                        <CardTitle>Select a Narrator</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <p className="text-muted-foreground">
+                          Click on a narrator from the list to view detailed information.
                         </p>
                       </CardContent>
                     </Card>
@@ -223,30 +288,109 @@ export default function HadithApp() {
               </div>
             ) : (
               <Card>
-                <CardContent className="text-center py-12">
-                  <Search className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-                  <h3 className="text-lg font-semibold text-gray-700 mb-2">No Results</h3>
-                  <p className="text-gray-500 mb-4">
-                    No narrators found. Try submitting a hadith text or using the advanced search.
+                <CardContent className="text-center py-8">
+                  <Users className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
+                  <p className="text-muted-foreground">
+                    No narrators found. Try analyzing a hadith or performing a search.
                   </p>
-                  <div className="flex items-center justify-center gap-2">
-                    <button 
-                      onClick={() => setActiveTab('input')}
-                      className="text-blue-600 hover:text-blue-800 font-medium"
-                    >
-                      Submit Hadith Text
-                    </button>
-                    <span className="text-gray-400">or</span>
-                    <button 
-                      onClick={() => setActiveTab('search')}
-                      className="text-blue-600 hover:text-blue-800 font-medium"
-                    >
-                      Advanced Search
-                    </button>
-                  </div>
                 </CardContent>
               </Card>
             )}
+          </TabsContent>
+
+          {/* Advanced Processing Tab */}
+          <TabsContent value="advanced" className="space-y-6" dir="ltr">
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+              {/* Bulk Hadith Processor */}
+              <div className="space-y-4">
+                <BulkHadithProcessor
+                  onProcessingComplete={handleBulkProcessingComplete}
+                  onProcessingStart={handleBulkProcessingStart}
+                  maxTexts={25} // Reduced for better performance
+                />
+                
+                {/* Bulk Results Summary */}
+                {bulkResults.length > 0 && (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2">
+                        <Upload className="h-4 w-4" />
+                        Bulk Processing Summary
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="grid grid-cols-2 gap-4 text-sm">
+                        <div>
+                          <strong>Texts Processed:</strong> {bulkResults.length}
+                        </div>
+                        <div>
+                          <strong>Avg Confidence:</strong> {
+                            Math.round(bulkResults.reduce((acc, r) => acc + r.confidence, 0) / bulkResults.length)
+                          }%
+                        </div>
+                        <div>
+                          <strong>With Isnad:</strong> {
+                            bulkResults.filter(r => r.structuralAnalysis.hasIsnad).length
+                          }
+                        </div>
+                        <div>
+                          <strong>Total Narrators:</strong> {
+                            bulkResults.reduce((acc, r) => acc + r.narrators.length, 0)
+                          }
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
+
+              {/* Hadith Similarity Engine */}
+              <div className="space-y-4">
+                <HadithSimilarityEngine
+                  sourceText={selectedAnalysisText}
+                  onSimilarityResults={handleSimilarityResults}
+                  threshold={0.7}
+                />
+                
+                {/* Similarity Results Summary */}
+                {similarityResults.length > 0 && (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2">
+                        <Zap className="h-4 w-4" />
+                        Similarity Analysis Summary
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="grid grid-cols-2 gap-4 text-sm">
+                        <div>
+                          <strong>Similar Texts:</strong> {similarityResults.length}
+                        </div>
+                        <div>
+                          <strong>Highest Match:</strong> {
+                            similarityResults.length > 0 
+                              ? Math.round(Math.max(...similarityResults.map(r => r.similarity)) * 100) + '%'
+                              : 'N/A'
+                          }
+                        </div>
+                        <div>
+                          <strong>Avg Similarity:</strong> {
+                            similarityResults.length > 0
+                              ? Math.round((similarityResults.reduce((acc, r) => acc + r.similarity, 0) / similarityResults.length) * 100) + '%'
+                              : 'N/A'
+                          }
+                        </div>
+                        <div>
+                          <strong>Sources:</strong> {
+                            new Set(similarityResults.map(r => r.source)).size
+                          }
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
+            </div>
           </TabsContent>
 
           {/* Statistics Tab */}

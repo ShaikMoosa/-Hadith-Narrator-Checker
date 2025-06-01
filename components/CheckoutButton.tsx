@@ -1,7 +1,7 @@
 'use client';
 
 import { loadStripe } from '@stripe/stripe-js';
-import toast from 'react-hot-toast';
+// import toast from 'react-hot-toast';
 import { useSession } from 'next-auth/react';
 import { redirect } from 'next/navigation';
 import { useState } from 'react';
@@ -22,7 +22,7 @@ export default function CheckoutButton({ priceId, productId, className }: Checko
 
 	const handleCheckout = async () => {
 		if (!user) {
-			toast.error("Please log in first");
+			// toast.error("Please log in first");
 			redirect('/api/auth/signin?callbackUrl=/');
 			return;
 		}
@@ -54,10 +54,10 @@ export default function CheckoutButton({ priceId, productId, className }: Checko
 		if (response.ok) {
 			await stripe?.redirectToCheckout({ sessionId: session.id });
 		} else if (response.status === 400) {
-			toast.success('You are already subscribed');
+			// toast.success('You are already subscribed');
 			redirect('/app/profile');
 		} else {
-			toast.error('Something went wrong');
+			// toast.error('Something went wrong');
 		}
 
 		setIsLoading(false);
