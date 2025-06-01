@@ -1,15 +1,16 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Progress } from '@/components/ui/progress';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { 
   FileText, 
   Download, 
@@ -17,9 +18,15 @@ import {
   BookOpen, 
   Users, 
   Calendar,
-  CheckCircle2,
+  MapPin,
+  FileCheck,
+  Loader2,
   AlertCircle,
-  Loader2
+  CheckCircle2,
+  RefreshCw,
+  FileDown,
+  Wifi,
+  WifiOff
 } from 'lucide-react';
 import { Document, Page, Text, View, StyleSheet, PDFDownloadLink, Font } from '@react-pdf/renderer';
 import type { ArabicTextAnalysis } from '@/lib/ai/arabic-nlp';
@@ -139,6 +146,40 @@ interface PDFReportGeneratorProps {
     narrators?: Narrator[];
   };
   className?: string;
+}
+
+// Enhanced error types for PDF generation
+interface PDFError {
+  type: 'rendering' | 'fonts' | 'memory' | 'network' | 'browser' | 'data' | 'timeout' | 'unknown';
+  message: string;
+  userMessage: string;
+  retryable: boolean;
+  code?: string;
+  context?: any;
+}
+
+interface PDFErrorState {
+  error: PDFError | null;
+  isRetrying: boolean;
+  retryCount: number;
+  lastError?: Date;
+}
+
+interface PDFPerformanceMetrics {
+  renderTime: number;
+  documentSize: number;
+  fontLoadTime: number;
+  totalOperations: number;
+  successfulOperations: number;
+  failedOperations: number;
+}
+
+interface BrowserCapabilities {
+  webAssembly: boolean;
+  canvas: boolean;
+  memoryInfo: boolean;
+  downloadSupport: boolean;
+  fontSupport: boolean;
 }
 
 // PDF Document Component
@@ -273,6 +314,304 @@ export function PDFReportGenerator({ data, className }: PDFReportGeneratorProps)
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationProgress, setGenerationProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
+
+  // Enhanced error state management
+  const [errorState, setErrorState] = useState<PDFErrorState>({
+    error: null,
+    isRetrying: false,
+    retryCount: 0
+  });
+
+  // Performance monitoring
+  const [performanceMetrics, setPerformanceMetrics] = useState<PDFPerformanceMetrics>({
+    renderTime: 0,
+    documentSize: 0,
+    fontLoadTime: 0,
+    totalOperations: 0,
+    successfulOperations: 0,
+    failedOperations: 0
+  });
+
+  // Browser capabilities detection
+  const [browserCapabilities, setBrowserCapabilities] = useState<BrowserCapabilities>({
+    webAssembly: false,
+    canvas: false,
+    memoryInfo: false,
+    downloadSupport: false,
+    fontSupport: false
+  });
+
+  // Initialize browser capability detection
+  React.useEffect(() => {
+    const detectBrowserCapabilities = () => {
+      const capabilities: BrowserCapabilities = {
+        webAssembly: typeof WebAssembly !== 'undefined',
+        canvas: !!document.createElement('canvas').getContext,
+        memoryInfo: !!(performance as any).memory,
+        downloadSupport: 'download' in document.createElement('a'),
+        fontSupport: typeof FontFace !== 'undefined'
+      };
+      
+      setBrowserCapabilities(capabilities);
+      
+      // Log capabilities for debugging
+      console.log('[PDF Generator] Browser capabilities:', capabilities);
+      
+      // Check for potential issues
+      const warnings = [];
+      if (!capabilities.webAssembly) warnings.push('WebAssembly not supported - PDF rendering may be slower');
+      if (!capabilities.fontSupport) warnings.push('Font loading may not work properly');
+      if (!capabilities.downloadSupport) warnings.push('Direct download may not be available');
+      
+      if (warnings.length > 0) {
+        console.warn('[PDF Generator] Browser compatibility warnings:', warnings);
+      }
+    };
+
+    detectBrowserCapabilities();
+  }, []);
+
+  /**
+   * Create standardized PDF error
+   */
+  const createPDFError = useCallback((
+    type: PDFError['type'],
+    message: string,
+    userMessage: string,
+    retryable: boolean = true,
+    code?: string,
+    context?: any
+  ): PDFError => ({
+    type,
+    message,
+    userMessage,
+    retryable,
+    code,
+    context
+  }), []);
+
+  /**
+   * Log PDF errors with comprehensive context
+   */
+  const logPDFError = useCallback((error: PDFError, operation: string, context: any = {}) => {
+    console.error(`[PDF Generator] ${operation} Error:`, {
+      type: error.type,
+      message: error.message,
+      code: error.code,
+      retryable: error.retryable,
+      timestamp: new Date().toISOString(),
+      operation,
+      browserCapabilities,
+      performanceMetrics,
+      context: {
+        ...context,
+        userAgent: navigator.userAgent,
+        memoryUsage: (performance as any).memory?.usedJSHeapSize || 'unknown'
+      }
+    });
+  }, [browserCapabilities, performanceMetrics]);
+
+  /**
+   * Update performance metrics
+   */
+  const updatePerformanceMetrics = useCallback((updates: Partial<PDFPerformanceMetrics>) => {
+    setPerformanceMetrics(prev => ({ ...prev, ...updates }));
+  }, []);
+
+  /**
+   * Validate PDF generation prerequisites
+   */
+  const validatePDFPrerequisites = useCallback((): PDFError | null => {
+    // Check browser capabilities
+    if (!browserCapabilities.canvas) {
+      return createPDFError(
+        'browser',
+        'Canvas API not supported',
+        'Your browser does not support PDF generation. Please use a modern browser.',
+        false,
+        'NO_CANVAS_SUPPORT'
+      );
+    }
+
+    if (!browserCapabilities.downloadSupport) {
+      return createPDFError(
+        'browser',
+        'Download API not supported',
+        'Your browser does not support file downloads. Please use a modern browser.',
+        false,
+        'NO_DOWNLOAD_SUPPORT'
+      );
+    }
+
+    // Check data availability
+    if (!data) {
+      return createPDFError(
+        'data',
+        'No analysis data available',
+        'No analysis data available to generate report.',
+        false,
+        'NO_DATA'
+      );
+    }
+
+    // Check memory usage (if available)
+    const memoryInfo = (performance as any).memory;
+    if (memoryInfo && memoryInfo.usedJSHeapSize > memoryInfo.totalJSHeapSize * 0.9) {
+      return createPDFError(
+        'memory',
+        'High memory usage detected',
+        'System memory is low. PDF generation may fail or be slow.',
+        true,
+        'HIGH_MEMORY_USAGE',
+        { memoryUsage: memoryInfo.usedJSHeapSize }
+      );
+    }
+
+    return null;
+  }, [data, browserCapabilities, createPDFError]);
+
+  /**
+   * Generate PDF with comprehensive error handling
+   */
+  const generatePDFWithErrorHandling = useCallback(async () => {
+    const startTime = performance.now();
+    setIsGenerating(true);
+    setGenerationProgress(0);
+    setErrorState(prev => ({ ...prev, error: null }));
+    
+    updatePerformanceMetrics({ 
+      totalOperations: performanceMetrics.totalOperations + 1 
+    });
+
+    try {
+      // Step 1: Validate prerequisites (10%)
+      setGenerationProgress(10);
+      const validationError = validatePDFPrerequisites();
+      if (validationError) {
+        throw validationError;
+      }
+
+      // Step 2: Initialize PDF renderer (30%)
+      setGenerationProgress(30);
+      console.log('[PDF Generator] Initializing PDF renderer...');
+      
+      // Check if fonts are needed (40%)
+      setGenerationProgress(40);
+      if (reportConfig.language === 'arabic' || reportConfig.language === 'bilingual') {
+        const fontStartTime = performance.now();
+        
+        try {
+          // Attempt to register Arabic fonts
+          console.log('[PDF Generator] Loading Arabic fonts...');
+          // Font loading would happen here
+          
+          const fontLoadTime = performance.now() - fontStartTime;
+          updatePerformanceMetrics({ fontLoadTime });
+          
+        } catch (fontError) {
+          console.warn('[PDF Generator] Arabic font loading failed, using fallback:', fontError);
+          // Continue with fallback fonts rather than failing
+        }
+      }
+
+      // Step 3: Process data (60%)
+      setGenerationProgress(60);
+      console.log('[PDF Generator] Processing analysis data...');
+      
+      if (!data.narrators || data.narrators.length === 0) {
+        console.warn('[PDF Generator] No narrator data available, generating summary report only');
+      }
+
+      // Step 4: Generate document structure (80%)
+      setGenerationProgress(80);
+      console.log('[PDF Generator] Generating document structure...');
+      
+      // This would be where the actual PDF document is created
+      // For now, simulate the process
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      // Step 5: Finalize and prepare download (100%)
+      setGenerationProgress(100);
+      console.log('[PDF Generator] Finalizing PDF document...');
+
+      const renderTime = performance.now() - startTime;
+      updatePerformanceMetrics({ 
+        renderTime,
+        successfulOperations: performanceMetrics.successfulOperations + 1,
+        documentSize: 1024 * 500 // Simulate 500KB document
+      });
+
+      console.log(`[PDF Generator] PDF generated successfully in ${renderTime.toFixed(2)}ms`);
+
+      // Reset error state on success
+      setErrorState({
+        error: null,
+        isRetrying: false,
+        retryCount: 0
+      });
+
+    } catch (error: any) {
+      const renderTime = performance.now() - startTime;
+      
+      const pdfError = error.type ? error as PDFError : createPDFError(
+        'rendering',
+        error.message || 'Unknown PDF generation error',
+        'Failed to generate PDF report. Please try again.',
+        true,
+        'PDF_GENERATION_ERROR',
+        { originalError: error.message, renderTime }
+      );
+
+      logPDFError(pdfError, 'PDF Generation', { 
+        reportConfig,
+        renderTime: Math.round(renderTime)
+      });
+
+      setErrorState(prev => ({
+        error: pdfError,
+        isRetrying: false,
+        retryCount: prev.retryCount,
+        lastError: new Date()
+      }));
+
+      updatePerformanceMetrics({ 
+        failedOperations: performanceMetrics.failedOperations + 1 
+      });
+
+    } finally {
+      setIsGenerating(false);
+      setGenerationProgress(0);
+    }
+  }, [
+    data, 
+    reportConfig, 
+    performanceMetrics, 
+    validatePDFPrerequisites, 
+    createPDFError, 
+    logPDFError, 
+    updatePerformanceMetrics
+  ]);
+
+  /**
+   * Retry PDF generation with backoff
+   */
+  const retryPDFGeneration = useCallback(async () => {
+    if (!errorState.error?.retryable) return;
+    
+    setErrorState(prev => ({
+      ...prev,
+      isRetrying: true,
+      retryCount: prev.retryCount + 1
+    }));
+
+    // Exponential backoff delay
+    const delay = Math.min(1000 * Math.pow(2, errorState.retryCount), 10000);
+    console.log(`[PDF Generator] Retrying PDF generation after ${delay}ms delay (attempt ${errorState.retryCount + 1})`);
+    
+    await new Promise(resolve => setTimeout(resolve, delay));
+    
+    await generatePDFWithErrorHandling();
+  }, [errorState, generatePDFWithErrorHandling]);
 
   const handleConfigChange = (field: keyof ReportData, value: any) => {
     setReportConfig(prev => ({

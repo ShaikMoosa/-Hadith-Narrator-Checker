@@ -21,150 +21,685 @@ import {
   convertDatabaseSearch 
 } from '@/types/hadith'
 
-/**
- * Process hadith text to extract narrator chain and identify hadith
- * This is the main server action for hadith analysis
- */
-export async function processHadithText(hadithText: string): Promise<ProcessHadithResponse> {
-  console.log(`[INFO] [${new Date().toISOString()}] Hadith text received for processing: "${hadithText.substring(0, 100)}..."`);
+// Enhanced error types for production-ready error handling
+interface ServerActionError {
+  type: 'database' | 'validation' | 'authentication' | 'network' | 'processing' | 'timeout' | 'unknown';
+  message: string;
+  userMessage: string;
+  retryable: boolean;
+  code?: string;
+  context?: any;
+}
 
+interface ServerActionResult<T = any> {
+  success: boolean;
+  data?: T;
+  error?: ServerActionError;
+  timestamp: string;
+  duration?: number;
+}
+
+interface RetryConfig {
+  maxRetries: number;
+  baseDelay: number;
+  maxDelay: number;
+  backoffMultiplier: number;
+}
+
+// Default retry configuration for server operations
+const DEFAULT_RETRY_CONFIG: RetryConfig = {
+  maxRetries: 3,
+  baseDelay: 1000,
+  maxDelay: 10000,
+  backoffMultiplier: 2
+};
+
+/**
+ * Create standardized server action error
+ */
+function createServerActionError(
+  type: ServerActionError['type'],
+  message: string,
+  userMessage: string,
+  retryable: boolean = true,
+  code?: string,
+  context?: any
+): ServerActionError {
+  return {
+    type,
+    message,
+    userMessage,
+    retryable,
+    code,
+    context
+  };
+}
+
+/**
+ * Log server action errors with comprehensive context
+ */
+function logServerActionError(error: ServerActionError, action: string, context: any = {}) {
+  console.error(`[Server Action] ${action} Error:`, {
+    type: error.type,
+    message: error.message,
+    code: error.code,
+    retryable: error.retryable,
+    timestamp: new Date().toISOString(),
+    action,
+    context: {
+      ...context,
+      userAgent: typeof window !== 'undefined' ? navigator.userAgent : 'server',
+      nodeVersion: process.version
+    }
+  });
+}
+
+/**
+ * Execute function with automatic retry logic
+ */
+async function executeWithRetry<T>(
+  fn: () => Promise<T>,
+  config: Partial<RetryConfig> = {},
+  context: string = 'Unknown Operation'
+): Promise<T> {
+  const retryConfig = { ...DEFAULT_RETRY_CONFIG, ...config };
+  let lastError: any;
+
+  for (let attempt = 0; attempt <= retryConfig.maxRetries; attempt++) {
+    try {
+      if (attempt > 0) {
+        const delay = Math.min(
+          retryConfig.baseDelay * Math.pow(retryConfig.backoffMultiplier, attempt - 1),
+          retryConfig.maxDelay
+        );
+        console.log(`[Server Action] Retry attempt ${attempt} for ${context} after ${delay}ms delay`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      console.warn(`[Server Action] Attempt ${attempt + 1} failed for ${context}:`, error);
+      
+      if (attempt === retryConfig.maxRetries) {
+        throw createServerActionError(
+          'processing',
+          `Max retries exceeded for ${context}`,
+          'Operation failed after multiple attempts. Please try again.',
+          false,
+          'MAX_RETRIES_EXCEEDED',
+          { attempts: attempt + 1, context }
+        );
+      }
+    }
+  }
+
+  throw lastError;
+}
+
+/**
+ * Execute function with timeout protection
+ */
+async function executeWithTimeout<T>(
+  fn: () => Promise<T>,
+  timeoutMs: number,
+  context: string = 'Unknown Operation'
+): Promise<T> {
+  return Promise.race([
+    fn(),
+    new Promise<never>((_, reject) => 
+      setTimeout(() => reject(
+        createServerActionError(
+          'timeout',
+          `Operation timeout for ${context}`,
+          'Operation is taking too long. Please try again.',
+          true,
+          'OPERATION_TIMEOUT',
+          { timeoutMs, context }
+        )
+      ), timeoutMs)
+    )
+  ]);
+}
+
+/**
+ * Validate input data with comprehensive error handling
+ */
+function validateHadithInput(text: string): ServerActionError | null {
+  if (!text || typeof text !== 'string') {
+    return createServerActionError(
+      'validation',
+      'Invalid input: text must be a non-empty string',
+      'Please provide valid hadith text.',
+      false,
+      'INVALID_INPUT_TYPE'
+    );
+  }
+
+  const trimmedText = text.trim();
+  if (trimmedText.length === 0) {
+    return createServerActionError(
+      'validation',
+      'Empty input text provided',
+      'Please enter some hadith text to analyze.',
+      false,
+      'EMPTY_INPUT'
+    );
+  }
+
+  if (trimmedText.length > 10000) {
+    return createServerActionError(
+      'validation',
+      'Input text too long',
+      'Please provide shorter text (maximum 10,000 characters).',
+      false,
+      'TEXT_TOO_LONG',
+      { length: trimmedText.length, maxLength: 10000 }
+    );
+  }
+
+  return null;
+}
+
+/**
+ * Enhanced narrator data with proper validation
+ */
+interface EnhancedNarratorData {
+  id: string;
+  name: string;
+  credibility_level: string;
+  confidence: number;
+  birth_year?: number;
+  death_year?: number;
+  region?: string;
+  match_position?: number;
+}
+
+/**
+ * Normalize Arabic text for better processing
+ */
+function normalizeArabicText(text: string): string {
+  return text
+    // Remove diacritics (تشكيل)
+    .replace(/[\u064B-\u065F\u0670\u0640]/g, '')
+    // Normalize Alef variants
+    .replace(/[أإآ]/g, 'ا')
+    // Normalize Teh Marbuta
+    .replace(/ة/g, 'ه')
+    // Normalize Yeh variants
+    .replace(/[ىي]/g, 'ي')
+    // Remove extra whitespace
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Extract narrator names from text using pattern matching
+ */
+function extractNarratorsFromText(text: string): Array<{ name: string; confidence: number; position: number }> {
+  const results: Array<{ name: string; confidence: number; position: number }> = [];
+  
+  // Enhanced Arabic narrator patterns
+  const narratorPatterns = [
+    { pattern: /حدثنا\s+([^،.؛]+)/g, confidence: 0.9 },           // "narrated to us"
+    { pattern: /أخبرنا\s+([^،.؛]+)/g, confidence: 0.9 },          // "informed us"
+    { pattern: /حدثني\s+([^،.؛]+)/g, confidence: 0.85 },          // "narrated to me"
+    { pattern: /قال\s+([^،.؛]+)/g, confidence: 0.7 },            // "said"
+    { pattern: /عن\s+([^،.؛]+)/g, confidence: 0.6 },             // "from/about"
+    { pattern: /بن\s+([^،.؛]+)/g, confidence: 0.75 },            // "son of"
+    { pattern: /أبو\s+([^،.؛]+)/g, confidence: 0.8 },            // "father of"
+  ];
+
+  for (const { pattern, confidence } of narratorPatterns) {
+    let match;
+    const tempPattern = new RegExp(pattern.source, pattern.flags);
+    while ((match = tempPattern.exec(text)) !== null) {
+      const name = match[1].trim();
+      if (name.length > 2 && name.length < 50) {
+        results.push({
+          name,
+          confidence,
+          position: match.index
+        });
+      }
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Process hadith text with comprehensive error handling and monitoring
+ */
+export async function processHadithText(text: string): Promise<ServerActionResult<{
+  originalText: string;
+  normalizedText: string;
+  narrators: EnhancedNarratorData[];
+  processingTime: number;
+  confidence: number;
+}>> {
+  const startTime = performance.now();
+  
   try {
+    console.log('[INFO] [' + new Date().toISOString() + '] Hadith text received for processing:', text.substring(0, 100) + '...');
+    
     // Input validation
-    if (!hadithText || hadithText.trim().length === 0) {
-      console.error(`[ERROR] [${new Date().toISOString()}] Invalid hadith text input.`);
+    const validationError = validateHadithInput(text);
+    if (validationError) {
+      logServerActionError(validationError, 'processHadithText', { textLength: text.length });
       return {
         success: false,
-        narrators: [],
-        error: 'Please provide a valid hadith text.'
+        error: validationError,
+        timestamp: new Date().toISOString()
       };
     }
 
-    // Get authenticated user - make it optional for now
-    const session = await auth();
-    const userId = session?.user?.id || 'anonymous';
+    // Get user context (if available)
+    const userContext = 'anonymous'; // TODO: Get from auth session
+    console.log('[INFO] [' + new Date().toISOString() + '] Processing hadith for user:', userContext);
+
+    // Normalize text with error handling
+    const normalizedText = await executeWithTimeout(
+      () => executeWithRetry(
+        () => Promise.resolve(normalizeArabicText(text)),
+        { maxRetries: 2 },
+        'Text Normalization'
+      ),
+      5000,
+      'Text Normalization'
+    );
+
+    console.log('[INFO] [' + new Date().toISOString() + '] Normalized hadith text:', normalizedText.substring(0, 100) + '...');
+
+    // Extract narrator information with database lookup
+    const narratorData = await executeWithTimeout(
+      () => executeWithRetry(
+        () => extractAndLookupNarrators(normalizedText),
+        { maxRetries: 3 },
+        'Narrator Extraction and Database Lookup'
+      ),
+      15000,
+      'Narrator Processing'
+    );
+
+    const processingTime = performance.now() - startTime;
     
-    console.log(`[INFO] [${new Date().toISOString()}] Processing hadith for user: ${userId}`);
+    // Calculate overall confidence
+    const confidence = narratorData.length > 0 
+      ? narratorData.reduce((sum, n) => sum + n.confidence, 0) / narratorData.length
+      : 0.5;
 
-    const normalizedText = hadithText.trim();
-    console.log(`[INFO] [${new Date().toISOString()}] Normalized hadith text: "${normalizedText.substring(0, 100)}..."`);
-
-    // TODO: Integrate with specialized libraries when available
-    // For now, we'll simulate the process and search for matching narrators in the database
-    
-    // Simulate hadith processing delay
-    await new Promise(resolve => setTimeout(resolve, 1000));
-
-    // Search for narrators that might be mentioned in the hadith text
-    const supabase = await createSupabaseAdminClient();
-    
-    // Extract potential narrator names from the text (simplified approach)
-    const potentialNarratorNames = extractNarratorNamesFromText(normalizedText);
-    
-    let foundNarrators: Narrator[] = [];
-    
-    if (potentialNarratorNames.length > 0) {
-      const { data: narratorData, error: narratorError } = await supabase
-        .from('narrator')
-        .select('*')
-        .or(potentialNarratorNames.map(name => `name_arabic.ilike.%${name}%,name_transliteration.ilike.%${name}%`).join(','));
-
-      if (narratorError) {
-        console.error(`[ERROR] [${new Date().toISOString()}] Error fetching narrators:`, narratorError);
-      } else if (narratorData) {
-        foundNarrators = narratorData.map(convertDatabaseNarrator);
-      }
-    }
-
-    // If no specific narrators found, return some default well-known narrators for demo
-    if (foundNarrators.length === 0) {
-      const { data: defaultNarrators, error: defaultError } = await supabase
-        .from('narrator')
-        .select('*')
-        .limit(3);
-
-      if (!defaultError && defaultNarrators) {
-        foundNarrators = defaultNarrators.map(convertDatabaseNarrator);
-      }
-    }
-
-    // Save search to database only if user is authenticated
-    if (session?.user?.id) {
-      await saveSearchToDatabase(session.user.id, hadithText, foundNarrators.length > 0);
-    } else {
-      console.log(`[INFO] [${new Date().toISOString()}] Skipping search save - user not authenticated`);
-    }
-
-    console.log(`[INFO] [${new Date().toISOString()}] Successfully processed hadith and found ${foundNarrators.length} narrators`);
+    console.log('[INFO] [' + new Date().toISOString() + '] Successfully processed hadith and found', narratorData.length, 'narrators');
 
     return {
       success: true,
-      narrators: foundNarrators,
-      hadithDetails: {
-        id: `hadith-${Date.now()}`,
-        text: normalizedText,
-        source: 'Processing Result',
-        chapter: 'Hadith Analysis'
-      }
+      data: {
+        originalText: text,
+        normalizedText,
+        narrators: narratorData,
+        processingTime: Math.round(processingTime),
+        confidence
+      },
+      timestamp: new Date().toISOString(),
+      duration: Math.round(processingTime)
     };
 
-  } catch (error) {
-    console.error(`[ERROR] [${new Date().toISOString()}] Error processing hadith text:`, error);
+  } catch (error: any) {
+    const processingTime = performance.now() - startTime;
+    
+    const serverActionError = error.type ? error as ServerActionError : createServerActionError(
+      'processing',
+      error.message || 'Unknown error during hadith processing',
+      'Failed to process hadith text. Please try again.',
+      true,
+      'PROCESSING_ERROR',
+      { originalError: error.message, stack: error.stack }
+    );
+
+    logServerActionError(serverActionError, 'processHadithText', { 
+      textLength: text.length,
+      processingTime: Math.round(processingTime)
+    });
+
     return {
       success: false,
-      narrators: [],
-      error: 'Failed to process hadith text. Please try again.'
+      error: serverActionError,
+      timestamp: new Date().toISOString(),
+      duration: Math.round(processingTime)
     };
   }
 }
 
 /**
- * Simple function to extract potential narrator names from hadith text
- * This is a simplified approach - in production, this would use specialized hadith processing libraries
+ * Extract and lookup narrators with enhanced error handling
  */
-function extractNarratorNamesFromText(text: string): string[] {
-  const commonNarratorTerms = [
-    'أبو هريرة', 'Abu Hurairah',
-    'عائشة', 'Aisha',
-    'أبو بكر', 'Abu Bakr',
-    'عمر', 'Umar',
-    'علي', 'Ali',
-    'حدثنا', 'أخبرنا', 'عن'
-  ];
-
-  const foundTerms: string[] = [];
-  
-  for (const term of commonNarratorTerms) {
-    if (text.includes(term)) {
-      foundTerms.push(term);
+async function extractAndLookupNarrators(text: string): Promise<EnhancedNarratorData[]> {
+  try {
+    // Pattern-based extraction
+    const extractedNarrators = extractNarratorsFromText(text);
+    
+    if (extractedNarrators.length === 0) {
+      console.log('[INFO] [' + new Date().toISOString() + '] No narrators found in text using pattern matching');
+      return [];
     }
-  }
 
-  return foundTerms;
+    // Database lookup with error handling
+    const supabase = await createSupabaseAdminClient();
+    const enhancedNarrators: EnhancedNarratorData[] = [];
+
+    for (const extracted of extractedNarrators) {
+      try {
+        const { data: matchedNarrators, error } = await supabase
+          .from('narrator')
+          .select('*')
+          .ilike('name_arabic', `%${extracted.name}%`)
+          .limit(5);
+
+        if (error) {
+          console.warn('[WARN] [' + new Date().toISOString() + '] Database lookup failed for narrator:', extracted.name, error);
+          // Continue processing other narrators instead of failing completely
+          continue;
+        }
+
+        if (matchedNarrators && matchedNarrators.length > 0) {
+          const bestMatch = matchedNarrators[0];
+          enhancedNarrators.push({
+            id: bestMatch.id.toString(),
+            name: bestMatch.name_arabic,
+            credibility_level: bestMatch.credibility || 'unknown',
+            confidence: extracted.confidence,
+            birth_year: bestMatch.birth_year || undefined,
+            death_year: bestMatch.death_year || undefined,
+            region: bestMatch.region || undefined,
+            match_position: extracted.position
+          });
+        }
+      } catch (narratorError: any) {
+        console.warn('[WARN] [' + new Date().toISOString() + '] Failed to process narrator:', extracted.name, narratorError);
+        // Continue with other narrators
+      }
+    }
+
+    return enhancedNarrators;
+
+  } catch (error: any) {
+    throw createServerActionError(
+      'database',
+      `Narrator extraction and lookup failed: ${error.message}`,
+      'Failed to analyze narrator information. Please try again.',
+      true,
+      'NARRATOR_EXTRACTION_ERROR',
+      { originalError: error.message }
+    );
+  }
 }
 
 /**
- * Save search query to database for search history
+ * Get all narrators with optional filtering
  */
-async function saveSearchToDatabase(userId: string, query: string, resultFound: boolean): Promise<void> {
+export async function getAllNarrators(limit?: number): Promise<Narrator[]> {
+  console.log(`[INFO] [${new Date().toISOString()}] Fetching all narrators`);
+
   try {
     const supabase = await createSupabaseAdminClient();
     
-    const { error } = await supabase
-      .from('search')
-      .insert({
-        query: query.substring(0, 500), // Limit query length
-        result_found: resultFound,
-        user_id: userId,
-        searched_at: new Date().toISOString()
-      });
+    let query = supabase
+      .from('narrator')
+      .select('*')
+      .order('name_arabic', { ascending: true });
+
+    if (limit) {
+      query = query.limit(limit);
+    }
+
+    const { data, error } = await query;
 
     if (error) {
-      console.error(`[ERROR] [${new Date().toISOString()}] Failed to save search:`, error);
-    } else {
-      console.log(`[INFO] [${new Date().toISOString()}] Search saved to database`);
+      console.error(`[ERROR] [${new Date().toISOString()}] Error fetching narrators:`, error);
+      return [];
     }
+
+    console.log(`[INFO] [${new Date().toISOString()}] Fetched ${data?.length || 0} narrators`);
+    return (data as DatabaseNarrator[])?.map(convertDatabaseNarrator) || [];
   } catch (error) {
-    console.error(`[ERROR] [${new Date().toISOString()}] Error saving search:`, error);
+    console.error(`[ERROR] [${new Date().toISOString()}] Error in getAllNarrators:`, error);
+    return [];
+  }
+}
+
+/**
+ * Search narrators with enhanced error handling and pagination
+ */
+export async function searchNarratorsWithFilters(
+  query: string,
+  filters: {
+    credibility?: string;
+    region?: string;
+    birth_year_min?: number;
+    birth_year_max?: number;
+  } = {},
+  page: number = 1,
+  limit: number = 10
+): Promise<ServerActionResult<{
+  narrators: any[];
+  total: number;
+  page: number;
+  totalPages: number;
+}>> {
+  const startTime = performance.now();
+
+  try {
+    // Input validation
+    if (!query || typeof query !== 'string' || query.trim().length === 0) {
+      const error = createServerActionError(
+        'validation',
+        'Search query is required',
+        'Please enter a search term.',
+        false,
+        'EMPTY_SEARCH_QUERY'
+      );
+      return {
+        success: false,
+        error,
+        timestamp: new Date().toISOString()
+      };
+    }
+
+    if (page < 1 || limit < 1 || limit > 100) {
+      const error = createServerActionError(
+        'validation',
+        'Invalid pagination parameters',
+        'Invalid page or limit parameters.',
+        false,
+        'INVALID_PAGINATION'
+      );
+      return {
+        success: false,
+        error,
+        timestamp: new Date().toISOString()
+      };
+    }
+
+    const supabase = await executeWithRetry(
+      () => Promise.resolve(createSupabaseAdminClient()),
+      { maxRetries: 2 },
+      'Supabase Client Creation'
+    );
+
+    // Build query with filters
+    let queryBuilder = supabase
+      .from('narrator')
+      .select('*', { count: 'exact' })
+      .ilike('name_arabic', `%${query.trim()}%`);
+
+    if (filters.credibility) {
+      queryBuilder = queryBuilder.eq('credibility', filters.credibility);
+    }
+    if (filters.region) {
+      queryBuilder = queryBuilder.ilike('region', `%${filters.region}%`);
+    }
+    if (filters.birth_year_min) {
+      queryBuilder = queryBuilder.gte('birth_year', filters.birth_year_min);
+    }
+    if (filters.birth_year_max) {
+      queryBuilder = queryBuilder.lte('birth_year', filters.birth_year_max);
+    }
+
+    // Execute query with pagination
+    const { data, count, error } = await executeWithTimeout(
+      () => queryBuilder
+        .order('name_arabic')
+        .range((page - 1) * limit, page * limit - 1),
+      10000,
+      'Narrator Search Query'
+    );
+
+    if (error) {
+      throw createServerActionError(
+        'database',
+        `Database query failed: ${error.message}`,
+        'Search failed. Please try again.',
+        true,
+        'DATABASE_QUERY_ERROR',
+        { query, filters, error: error.message }
+      );
+    }
+
+    const processingTime = performance.now() - startTime;
+    const totalPages = Math.ceil((count || 0) / limit);
+
+    return {
+      success: true,
+      data: {
+        narrators: data || [],
+        total: count || 0,
+        page,
+        totalPages
+      },
+      timestamp: new Date().toISOString(),
+      duration: Math.round(processingTime)
+    };
+
+  } catch (error: any) {
+    const processingTime = performance.now() - startTime;
+    
+    const serverActionError = error.type ? error as ServerActionError : createServerActionError(
+      'processing',
+      error.message || 'Unknown error during narrator search',
+      'Search failed. Please try again.',
+      true,
+      'SEARCH_ERROR',
+      { query, filters, originalError: error.message }
+    );
+
+    logServerActionError(serverActionError, 'searchNarratorsWithFilters', { 
+      query,
+      filters,
+      page,
+      limit,
+      processingTime: Math.round(processingTime)
+    });
+
+    return {
+      success: false,
+      error: serverActionError,
+      timestamp: new Date().toISOString(),
+      duration: Math.round(processingTime)
+    };
+  }
+}
+
+/**
+ * Get narrator opinions with enhanced error handling
+ */
+export async function getNarratorOpinions(narratorId: string): Promise<ServerActionResult<any[]>> {
+  const startTime = performance.now();
+
+  try {
+    console.log('[INFO] [' + new Date().toISOString() + '] Fetching opinions for narrator ID:', narratorId);
+
+    // Input validation
+    if (!narratorId || typeof narratorId !== 'string') {
+      const error = createServerActionError(
+        'validation',
+        'Invalid narrator ID',
+        'Invalid narrator identifier.',
+        false,
+        'INVALID_NARRATOR_ID'
+      );
+      return {
+        success: false,
+        error,
+        timestamp: new Date().toISOString()
+      };
+    }
+
+    const supabase = await executeWithRetry(
+      () => Promise.resolve(createSupabaseAdminClient()),
+      { maxRetries: 2 },
+      'Supabase Client Creation'
+    );
+
+    const { data, error } = await executeWithTimeout(
+      () => supabase
+        .from('opinion')
+        .select(`
+          *,
+          narrator:narrator_id (
+            name_arabic,
+            credibility
+          )
+        `)
+        .eq('narrator_id', narratorId)
+        .order('created_at', { ascending: false }),
+      8000,
+      'Opinion Query'
+    );
+
+    if (error) {
+      throw createServerActionError(
+        'database',
+        `Failed to fetch opinions: ${error.message}`,
+        'Unable to load opinions. Please try again.',
+        true,
+        'OPINION_FETCH_ERROR',
+        { narratorId, error: error.message }
+      );
+    }
+
+    const processingTime = performance.now() - startTime;
+    console.log('[INFO] [' + new Date().toISOString() + '] Fetched', data?.length || 0, 'opinions for narrator', narratorId);
+
+    return {
+      success: true,
+      data: data || [],
+      timestamp: new Date().toISOString(),
+      duration: Math.round(processingTime)
+    };
+
+  } catch (error: any) {
+    const processingTime = performance.now() - startTime;
+    
+    const serverActionError = error.type ? error as ServerActionError : createServerActionError(
+      'processing',
+      error.message || 'Unknown error fetching opinions',
+      'Failed to load opinions. Please try again.',
+      true,
+      'OPINION_ERROR',
+      { narratorId, originalError: error.message }
+    );
+
+    logServerActionError(serverActionError, 'getNarratorOpinions', { 
+      narratorId,
+      processingTime: Math.round(processingTime)
+    });
+
+    return {
+      success: false,
+      error: serverActionError,
+      timestamp: new Date().toISOString(),
+      duration: Math.round(processingTime)
+    };
   }
 }
 
@@ -273,34 +808,6 @@ export async function fetchRecentSearches(): Promise<Search[]> {
 }
 
 /**
- * Fetch opinions for a specific narrator
- */
-export async function fetchNarratorOpinions(narratorId: number): Promise<Opinion[]> {
-  console.log(`[INFO] [${new Date().toISOString()}] Fetching opinions for narrator ID: ${narratorId}`);
-
-  try {
-    const supabase = await createSupabaseAdminClient();
-    
-    const { data, error } = await supabase
-      .from('opinion')
-      .select('*')
-      .eq('narrator_id', narratorId)
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      console.error(`[ERROR] [${new Date().toISOString()}] Error fetching opinions:`, error);
-      return [];
-    }
-
-    console.log(`[INFO] [${new Date().toISOString()}] Fetched ${data?.length || 0} opinions for narrator ${narratorId}`);
-    return (data as DatabaseOpinion[])?.map(convertDatabaseOpinion) || [];
-  } catch (error) {
-    console.error(`[ERROR] [${new Date().toISOString()}] Error in fetchNarratorOpinions:`, error);
-    return [];
-  }
-}
-
-/**
  * Check if a narrator is bookmarked by the current user
  */
 export async function checkBookmarkStatus(narratorId: number): Promise<boolean> {
@@ -332,40 +839,7 @@ export async function checkBookmarkStatus(narratorId: number): Promise<boolean> 
 }
 
 /**
- * Get all narrators with optional filtering
- */
-export async function getAllNarrators(limit?: number): Promise<Narrator[]> {
-  console.log(`[INFO] [${new Date().toISOString()}] Fetching all narrators`);
-
-  try {
-    const supabase = await createSupabaseAdminClient();
-    
-    let query = supabase
-      .from('narrator')
-      .select('*')
-      .order('name_arabic', { ascending: true });
-
-    if (limit) {
-      query = query.limit(limit);
-    }
-
-    const { data, error } = await query;
-
-    if (error) {
-      console.error(`[ERROR] [${new Date().toISOString()}] Error fetching narrators:`, error);
-      return [];
-    }
-
-    console.log(`[INFO] [${new Date().toISOString()}] Fetched ${data?.length || 0} narrators`);
-    return (data as DatabaseNarrator[])?.map(convertDatabaseNarrator) || [];
-  } catch (error) {
-    console.error(`[ERROR] [${new Date().toISOString()}] Error in getAllNarrators:`, error);
-    return [];
-  }
-}
-
-/**
- * Search narrators by name or transliteration
+ * Simple search narrators by name or transliteration (for basic use cases)
  */
 export async function searchNarrators(searchTerm: string): Promise<Narrator[]> {
   console.log(`[INFO] [${new Date().toISOString()}] Searching narrators with term: "${searchTerm}"`);
@@ -780,4 +1254,53 @@ function extractEnhancedSearchTerms(text: string): string[] {
   }
 
   return [...new Set(foundTerms)]; // Remove duplicates
+}
+
+/**
+ * Save search to database for search history
+ */
+async function saveSearchToDatabase(userId: string, searchQuery: string, hasResults: boolean): Promise<void> {
+  try {
+    const supabase = await createSupabaseAdminClient();
+    
+    const { error } = await supabase
+      .from('search')
+      .insert({
+        user_id: userId,
+        query: searchQuery,
+        has_results: hasResults,
+        searched_at: new Date().toISOString()
+      });
+
+    if (error) {
+      console.error(`[ERROR] [${new Date().toISOString()}] Failed to save search to database:`, error);
+      // Don't throw error - search history is not critical
+    } else {
+      console.log(`[INFO] [${new Date().toISOString()}] Search saved to database: "${searchQuery}"`);
+    }
+  } catch (error) {
+    console.error(`[ERROR] [${new Date().toISOString()}] Error saving search to database:`, error);
+    // Don't throw error - search history is not critical
+  }
+}
+
+/**
+ * Alias for getNarratorOpinions to maintain compatibility with existing imports
+ */
+export async function fetchNarratorOpinions(narratorId: string): Promise<any[]> {
+  console.log(`[INFO] [${new Date().toISOString()}] Fetching opinions for narrator (alias): ${narratorId}`);
+  
+  try {
+    const result = await getNarratorOpinions(narratorId);
+    
+    if (result.success) {
+      return result.data || [];
+    } else {
+      console.error(`[ERROR] [${new Date().toISOString()}] Error fetching opinions:`, result.error);
+      return [];
+    }
+  } catch (error) {
+    console.error(`[ERROR] [${new Date().toISOString()}] Error in fetchNarratorOpinions:`, error);
+    return [];
+  }
 } 

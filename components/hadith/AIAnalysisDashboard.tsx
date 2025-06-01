@@ -18,21 +18,48 @@ import {
   AlertCircle,
   CheckCircle2,
   Clock,
-  Target
+  Target,
+  Loader2,
+  RefreshCw,
+  Wifi,
+  WifiOff
 } from 'lucide-react';
 import { getArabicNLPEngine, type ArabicTextAnalysis, type NarratorEntity } from '@/lib/ai/arabic-nlp';
 
 interface AIInsight {
-  id: string;
-  type: 'narrator' | 'language' | 'sentiment' | 'quality' | 'semantic';
+  type: 'narrator' | 'language' | 'processing' | 'confidence' | 'quality';
   title: string;
+  value: string;
   description: string;
-  confidence: number;
   severity: 'info' | 'warning' | 'success' | 'error';
 }
 
 interface AIAnalysisDashboardProps {
   className?: string;
+}
+
+// Enhanced error types for better error handling
+interface AIError {
+  type: 'network' | 'timeout' | 'processing' | 'initialization' | 'validation' | 'unknown';
+  message: string;
+  userMessage: string;
+  retryable: boolean;
+  code?: string;
+}
+
+interface ErrorState {
+  error: AIError | null;
+  isRetrying: boolean;
+  retryCount: number;
+  lastError?: Date;
+}
+
+interface PerformanceMetrics {
+  initializationTime: number;
+  analysisTime: number;
+  totalOperations: number;
+  successfulOperations: number;
+  failedOperations: number;
 }
 
 export function AIAnalysisDashboard({ className }: AIAnalysisDashboardProps) {
@@ -42,125 +69,276 @@ export function AIAnalysisDashboard({ className }: AIAnalysisDashboardProps) {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [aiEngineReady, setAiEngineReady] = useState(false);
   const [initializationProgress, setInitializationProgress] = useState(0);
-  const [error, setError] = useState<string | null>(null);
+  
+  // Enhanced error state management
+  const [errorState, setErrorState] = useState<ErrorState>({
+    error: null,
+    isRetrying: false,
+    retryCount: 0
+  });
 
-  // Initialize AI engine on component mount
+  // Performance monitoring
+  const [performanceMetrics, setPerformanceMetrics] = useState<PerformanceMetrics>({
+    initializationTime: 0,
+    analysisTime: 0,
+    totalOperations: 0,
+    successfulOperations: 0,
+    failedOperations: 0
+  });
+
+  // Network status monitoring
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+
+  // Initialize AI engine on component mount with enhanced error handling
   useEffect(() => {
     initializeAIEngine();
+    
+    // Monitor network status
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
   }, []);
 
-  const initializeAIEngine = async () => {
+  const createAIError = (
+    type: AIError['type'], 
+    message: string, 
+    userMessage: string, 
+    retryable: boolean = true,
+    code?: string
+  ): AIError => ({
+    type,
+    message,
+    userMessage,
+    retryable,
+    code
+  });
+
+  const logError = (error: AIError, context: string) => {
+    console.error(`[AI Dashboard] ${context}:`, {
+      type: error.type,
+      message: error.message,
+      code: error.code,
+      timestamp: new Date().toISOString(),
+      userAgent: navigator.userAgent,
+      context
+    });
+  };
+
+  const updatePerformanceMetrics = (updates: Partial<PerformanceMetrics>) => {
+    setPerformanceMetrics(prev => ({ ...prev, ...updates }));
+  };
+
+  const initializeAIEngine = async (isRetry: boolean = false) => {
+    const startTime = performance.now();
+    
     try {
+      if (isRetry) {
+        setErrorState(prev => ({ ...prev, isRetrying: true }));
+      }
+
       setInitializationProgress(10);
       console.log('[AI Dashboard] Initializing AI engine...');
       
+      // Check prerequisites
+      if (!isOnline) {
+        throw createAIError('network', 'No internet connection', 
+          'Internet connection required to load AI models. Please check your connection.', true);
+      }
+
+      // Clear previous errors
+      setErrorState(prev => ({ ...prev, error: null }));
+      
+      setInitializationProgress(30);
+      
       const engine = await getArabicNLPEngine();
+      
+      setInitializationProgress(80);
+      
+      // Verify engine is working
+      await engine.extractNarrators('test'); // Simple verification
+      
       setInitializationProgress(100);
       setAiEngineReady(true);
       
-      console.log('[AI Dashboard] AI engine ready');
-    } catch (error) {
-      console.error('[AI Dashboard] Failed to initialize AI engine:', error);
-      setError('Failed to initialize AI models. Please refresh the page.');
+      const initTime = performance.now() - startTime;
+      updatePerformanceMetrics({ initializationTime: initTime });
+      
+      console.log(`[AI Dashboard] AI engine ready in ${initTime.toFixed(2)}ms`);
+      
+      // Reset error state on success
+      setErrorState({
+        error: null,
+        isRetrying: false,
+        retryCount: 0
+      });
+      
+    } catch (error: any) {
+      const aiError = error.type ? error as AIError : createAIError(
+        'initialization', 
+        error.message || 'Unknown initialization error',
+        'Failed to initialize AI models. Please try again or refresh the page.',
+        true
+      );
+      
+      logError(aiError, 'Initialization');
+      
+      setErrorState(prev => ({
+        error: aiError,
+        isRetrying: false,
+        retryCount: isRetry ? prev.retryCount + 1 : 0,
+        lastError: new Date()
+      }));
+      
       setInitializationProgress(0);
+      updatePerformanceMetrics({ failedOperations: performanceMetrics.failedOperations + 1 });
     }
   };
 
   const analyzeText = useCallback(async () => {
-    if (!inputText.trim() || !aiEngineReady) return;
+    if (!inputText.trim()) {
+      setErrorState(prev => ({
+        ...prev,
+        error: createAIError('validation', 'Empty input', 'Please enter some text to analyze.', false)
+      }));
+      return;
+    }
 
+    if (!aiEngineReady) {
+      setErrorState(prev => ({
+        ...prev,
+        error: createAIError('initialization', 'AI engine not ready', 
+          'AI engine is not ready. Please wait for initialization to complete.', false)
+      }));
+      return;
+    }
+
+    if (!isOnline) {
+      setErrorState(prev => ({
+        ...prev,
+        error: createAIError('network', 'No internet connection', 
+          'Internet connection required for AI analysis.', true)
+      }));
+      return;
+    }
+
+    const startTime = performance.now();
     setIsAnalyzing(true);
-    setError(null);
+    setErrorState(prev => ({ ...prev, error: null }));
+    
+    updatePerformanceMetrics({ 
+      totalOperations: performanceMetrics.totalOperations + 1 
+    });
 
     try {
+      console.log('[AI Dashboard] Starting text analysis...');
+      
       const engine = await getArabicNLPEngine();
-      const result = await engine.analyzeText(inputText);
+      
+      // Set timeout for analysis
+      const analysisPromise = engine.analyzeText(inputText);
+      const timeoutPromise = new Promise<never>((_, reject) => 
+        setTimeout(() => reject(createAIError('timeout', 'Analysis timeout', 
+          'Analysis is taking too long. Please try with shorter text.', true)), 30000)
+      );
+      
+      const result = await Promise.race([analysisPromise, timeoutPromise]);
       
       setAnalysis(result);
       generateInsights(result);
       
-      console.log('[AI Dashboard] Analysis completed:', result);
-    } catch (error) {
-      console.error('[AI Dashboard] Analysis failed:', error);
-      setError('Analysis failed. Please try again.');
+      const analysisTime = performance.now() - startTime;
+      updatePerformanceMetrics({ 
+        analysisTime,
+        successfulOperations: performanceMetrics.successfulOperations + 1 
+      });
+      
+      console.log(`[AI Dashboard] Analysis completed in ${analysisTime.toFixed(2)}ms:`, result);
+      
+    } catch (error: any) {
+      const aiError = error.type ? error as AIError : createAIError(
+        'processing', 
+        error.message || 'Unknown analysis error',
+        'Analysis failed. Please try again with different text.',
+        true
+      );
+      
+      logError(aiError, 'Text Analysis');
+      
+      setErrorState(prev => ({
+        ...prev,
+        error: aiError,
+        lastError: new Date()
+      }));
+      
+      updatePerformanceMetrics({ 
+        failedOperations: performanceMetrics.failedOperations + 1 
+      });
+      
     } finally {
       setIsAnalyzing(false);
     }
-  }, [inputText, aiEngineReady]);
+  }, [inputText, aiEngineReady, isOnline, performanceMetrics.totalOperations, performanceMetrics.successfulOperations, performanceMetrics.failedOperations]);
 
-  const generateInsights = (analysis: ArabicTextAnalysis) => {
-    const insights: AIInsight[] = [];
+  const handleRetry = useCallback(async () => {
+    if (!errorState.error?.retryable) return;
+    
+    if (errorState.error.type === 'initialization') {
+      await initializeAIEngine(true);
+    } else {
+      await analyzeText();
+    }
+  }, [errorState.error, analyzeText]);
 
-    // Narrator insights
-    if (analysis.detectedNarrators.length > 0) {
-      const avgConfidence = analysis.detectedNarrators.reduce((sum, n) => sum + n.confidence, 0) / analysis.detectedNarrators.length;
-      insights.push({
-        id: 'narrator-quality',
+  const generateInsights = (result: ArabicTextAnalysis) => {
+    const newInsights: AIInsight[] = [];
+
+    // Narrator quality insight
+    if (result.narratorEntities.length > 0) {
+      const avgConfidence = result.narratorEntities.reduce((sum: number, n: NarratorEntity) => sum + n.confidence, 0) / result.narratorEntities.length;
+      newInsights.push({
         type: 'narrator',
         title: 'Narrator Recognition Quality',
-        description: `Detected ${analysis.detectedNarrators.length} narrator(s) with ${Math.round(avgConfidence * 100)}% average confidence`,
-        confidence: avgConfidence,
+        value: `${(avgConfidence * 100).toFixed(1)}%`,
+        description: `Identified ${result.narratorEntities.length} narrator(s) with average confidence of ${(avgConfidence * 100).toFixed(1)}%`,
         severity: avgConfidence > 0.8 ? 'success' : avgConfidence > 0.6 ? 'warning' : 'error'
       });
-
-      // Check for high-authority narrators
-      const companions = analysis.detectedNarrators.filter(n => n.type === 'companion');
-      if (companions.length > 0) {
-        insights.push({
-          id: 'companion-detected',
-          type: 'narrator',
-          title: 'Companion Narrator Detected',
-          description: `Found ${companions.length} Companion narrator(s): ${companions.map(c => c.name).join(', ')}`,
-          confidence: 0.9,
-          severity: 'success'
-        });
-      }
-    } else {
-      insights.push({
-        id: 'no-narrators',
-        type: 'narrator',
-        title: 'No Narrators Detected',
-        description: 'No clear narrator patterns found in the text',
-        confidence: 0.3,
-        severity: 'warning'
-      });
     }
 
-    // Language insights
-    insights.push({
-      id: 'language-detection',
+    // Language analysis insight
+    newInsights.push({
       type: 'language',
-      title: 'Language Analysis',
-      description: `Primary language: ${analysis.language.toUpperCase()}`,
-      confidence: 0.8,
-      severity: analysis.language === 'arabic' ? 'success' : 'info'
+      title: 'Text Language',
+      value: result.language === 'arabic' ? 'Arabic' : result.language === 'english' ? 'English' : 'Mixed',
+      description: `Text appears to be primarily in ${result.language}`,
+      severity: result.language === 'arabic' ? 'success' : 'info'
     });
 
-    // Quality insights
-    if (analysis.readabilityScore < 30) {
-      insights.push({
-        id: 'readability-complex',
-        type: 'quality',
-        title: 'Complex Text Structure',
-        description: 'Text has complex sentence structure, typical of classical Arabic',
-        confidence: 0.7,
-        severity: 'info'
-      });
-    }
+    // Processing time insight
+    newInsights.push({
+      type: 'processing',
+      title: 'Processing Speed',
+      value: `${result.processingTime}ms`,
+      description: `Analysis completed in ${result.processingTime} milliseconds`,
+      severity: result.processingTime < 1000 ? 'success' : result.processingTime < 3000 ? 'warning' : 'error'
+    });
 
-    // Sentiment insights
-    if (analysis.sentiment !== 'neutral') {
-      insights.push({
-        id: 'sentiment-analysis',
-        type: 'sentiment',
-        title: 'Text Sentiment',
-        description: `Detected ${analysis.sentiment} sentiment in the text`,
-        confidence: 0.6,
-        severity: analysis.sentiment === 'positive' ? 'success' : 'warning'
-      });
-    }
+    // Overall confidence insight
+    newInsights.push({
+      type: 'confidence',
+      title: 'Analysis Confidence',
+      value: `${(result.confidence * 100).toFixed(1)}%`,
+      description: `Overall confidence in the analysis results`,
+      severity: result.confidence > 0.8 ? 'success' : result.confidence > 0.6 ? 'warning' : 'error'
+    });
 
-    setInsights(insights);
+    setInsights(newInsights);
   };
 
   const renderNarratorCard = (narrator: NarratorEntity, index: number) => (
@@ -189,7 +367,7 @@ export function AIAnalysisDashboard({ className }: AIAnalysisDashboardProps) {
   );
 
   const renderInsightCard = (insight: AIInsight) => (
-    <Alert key={insight.id} className={`mb-2 ${
+    <Alert key={insight.title} className={`mb-2 ${
       insight.severity === 'success' ? 'border-green-200 bg-green-50' :
       insight.severity === 'warning' ? 'border-yellow-200 bg-yellow-50' :
       insight.severity === 'error' ? 'border-red-200 bg-red-50' :
@@ -199,15 +377,15 @@ export function AIAnalysisDashboard({ className }: AIAnalysisDashboardProps) {
         <div className="flex-shrink-0 mt-0.5">
           {insight.type === 'narrator' && <Users className="h-4 w-4" />}
           {insight.type === 'language' && <BookOpen className="h-4 w-4" />}
-          {insight.type === 'sentiment' && <TrendingUp className="h-4 w-4" />}
-          {insight.type === 'quality' && <Target className="h-4 w-4" />}
-          {insight.type === 'semantic' && <Brain className="h-4 w-4" />}
+          {insight.type === 'processing' && <TrendingUp className="h-4 w-4" />}
+          {insight.type === 'confidence' && <Target className="h-4 w-4" />}
+          {insight.type === 'quality' && <Brain className="h-4 w-4" />}
         </div>
         <div className="flex-1">
           <div className="flex items-center justify-between">
             <h4 className="font-medium text-sm">{insight.title}</h4>
             <span className="text-xs text-muted-foreground">
-              {Math.round(insight.confidence * 100)}%
+              {insight.value}
             </span>
           </div>
           <AlertDescription className="text-sm mt-1">
@@ -217,6 +395,16 @@ export function AIAnalysisDashboard({ className }: AIAnalysisDashboardProps) {
       </div>
     </Alert>
   );
+
+  const getErrorIcon = () => {
+    if (!errorState.error) return null;
+    return errorState.error.type === 'network' ? <WifiOff className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />;
+  };
+
+  const getErrorSeverity = () => {
+    if (!errorState.error) return 'default';
+    return errorState.error.retryable ? 'default' : 'destructive';
+  };
 
   return (
     <div className={`space-y-6 ${className}`}>
@@ -253,10 +441,10 @@ export function AIAnalysisDashboard({ className }: AIAnalysisDashboardProps) {
       )}
 
       {/* Error Display */}
-      {error && (
-        <Alert className="border-red-200 bg-red-50">
-          <AlertCircle className="h-4 w-4" />
-          <AlertDescription>{error}</AlertDescription>
+      {errorState.error && (
+        <Alert className={`border-${getErrorSeverity()} bg-${getErrorSeverity()}-50`}>
+          {getErrorIcon()}
+          <AlertDescription>{errorState.error.userMessage}</AlertDescription>
         </Alert>
       )}
 
@@ -321,7 +509,7 @@ export function AIAnalysisDashboard({ className }: AIAnalysisDashboardProps) {
                     <Users className="h-5 w-5 text-blue-500" />
                     <div>
                       <p className="text-sm text-muted-foreground">Narrators Found</p>
-                      <p className="text-2xl font-bold">{analysis.detectedNarrators.length}</p>
+                      <p className="text-2xl font-bold">{analysis.narratorEntities.length}</p>
                     </div>
                   </div>
                 </CardContent>
@@ -358,13 +546,13 @@ export function AIAnalysisDashboard({ className }: AIAnalysisDashboardProps) {
               <CardHeader>
                 <CardTitle className="flex items-center space-x-2">
                   <Users className="h-5 w-5" />
-                  <span>Detected Narrators ({analysis.detectedNarrators.length})</span>
+                  <span>Detected Narrators ({analysis.narratorEntities.length})</span>
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                {analysis.detectedNarrators.length > 0 ? (
+                {analysis.narratorEntities.length > 0 ? (
                   <div className="space-y-2">
-                    {analysis.detectedNarrators.map((narrator, index) => 
+                    {analysis.narratorEntities.map((narrator, index) => 
                       renderNarratorCard(narrator, index)
                     )}
                   </div>

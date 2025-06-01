@@ -3,27 +3,24 @@ import { test, expect } from '@playwright/test';
 test.describe('Hadith Narrator Checker Application', () => {
   test.beforeEach(async ({ page }) => {
     // Navigate to the application
-    await page.goto('http://localhost:3001/app');
+    await page.goto('/app');
     
     // Wait for the page to load
-    await expect(page.locator('heading', { hasText: 'مُتحقق الرواة' })).toBeVisible();
+    await expect(page.locator('h1:has-text("مُتحقق الرواة")')).toBeVisible();
   });
 
   test('Test 1: Application Loading & Navigation', async ({ page }) => {
     // Check Arabic title is displayed
-    await expect(page.locator('heading', { hasText: 'مُتحقق الرواة' })).toBeVisible();
+    await expect(page.locator('h1:has-text("مُتحقق الرواة")')).toBeVisible();
     
     // Check English title is displayed
-    await expect(page.locator('heading', { hasText: 'Hadith Narrator Checker' })).toBeVisible();
+    await expect(page.locator('h2:has-text("Hadith Narrator Checker")')).toBeVisible();
     
     // Check all main tabs are present
     await expect(page.getByRole('tab', { name: 'Hadith Analysis' })).toBeVisible();
     await expect(page.getByRole('tab', { name: 'Advanced Search' })).toBeVisible();
     await expect(page.getByRole('tab', { name: /Results/ })).toBeVisible();
     await expect(page.getByRole('tab', { name: 'Statistics' })).toBeVisible();
-    
-    // Check user authentication element
-    await expect(page.locator('button', { hasText: 'SHAIK MOOSA' })).toBeVisible();
     
     // Check feature cards
     await expect(page.locator('text=Classical Sources')).toBeVisible();

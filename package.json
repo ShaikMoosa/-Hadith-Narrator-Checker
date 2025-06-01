@@ -3,8 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack",
+    "dev": "next dev",
+    "dev:turbo": "next dev --turbopack",
     "build": "next build",
+    "build:analyze": "ANALYZE=true next build",
     "start": "next start",
     "lint": "next lint",
     "email": "email dev",
@@ -14,7 +16,11 @@
     "test:ui": "node scripts/run-tests.js ui",
     "test:debug": "node scripts/run-tests.js debug",
     "test:headed": "node scripts/run-tests.js headed",
-    "test:install": "npm install --save-dev @playwright/test && npx playwright install"
+    "test:install": "npm install --save-dev @playwright/test && npx playwright install",
+    "clean": "rm -rf .next node_modules/.cache",
+    "reinstall": "npm run clean && npm install",
+    "dev:windows": "set NODE_OPTIONS=--max-old-space-size=4096 && next dev",
+    "build:production": "npm run lint:ts && next build"
   },
   "dependencies": {
     "@auth/supabase-adapter": "^1.7.4",
@@ -38,7 +44,6 @@
     "@xenova/transformers": "^2.17.2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "cosine-similarity": "^1.0.1",
     "framer-motion": "^12.4.7",
     "jose": "^5.10.0",
     "lucide-react": "^0.475.0",
