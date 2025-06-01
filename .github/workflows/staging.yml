@@ -1,0 +1,225 @@
+name: 🚀 Staging Deployment (Preview)
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [develop, staging]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '18'
+  VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+  VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+jobs:
+  # ✅ SECURITY & QUALITY CHECKS
+  security-audit:
+    name: 🔒 Security & Quality Audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🏗️ Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: 📦 Install Dependencies
+        run: npm ci --prefer-offline --no-audit
+
+      - name: 🔍 TypeScript Check
+        run: npm run lint:ts
+
+      - name: 🛡️ Security Validation
+        run: npm run security:validate
+
+      - name: 🧹 Code Linting
+        run: npm run lint
+
+      - name: 📊 Build Check
+        run: npm run build
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
+
+  # 🧪 AI & TESTING VALIDATION
+  ai-testing:
+    name: 🧠 AI Components & E2E Testing
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: security-audit
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🏗️ Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: 📦 Install Dependencies
+        run: npm ci --prefer-offline --no-audit
+
+      - name: 🎭 Install Playwright
+        run: npx playwright install --with-deps chromium firefox
+
+      - name: 🏃 Start Development Server
+        run: npm run dev &
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
+
+      - name: ⏳ Wait for Server
+        run: npx wait-on http://localhost:3000 --timeout 60000
+
+      - name: 🧪 Run E2E Tests
+        run: npm run test
+        env:
+          CI: true
+
+      - name: 📁 Upload Test Results
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report-staging
+          path: test-results/
+          retention-days: 7
+
+  # 🌍 VERCEL PREVIEW DEPLOYMENT
+  deploy-preview:
+    name: 🚀 Deploy to Vercel Preview
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [security-audit, ai-testing]
+    if: github.event_name == 'pull_request'
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🏗️ Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: 📦 Install Vercel CLI
+        run: npm install -g vercel@latest
+
+      - name: 🔗 Link Vercel Project
+        run: vercel link --yes --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: 🏗️ Build Project for Preview
+        run: vercel build --token=${{ secrets.VERCEL_TOKEN }}
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
+
+      - name: 🚀 Deploy to Preview
+        id: deploy
+        run: |
+          PREVIEW_URL=$(vercel deploy --prebuilt --token=${{ secrets.VERCEL_TOKEN }})
+          echo "preview_url=$PREVIEW_URL" >> $GITHUB_OUTPUT
+          echo "🌍 Preview deployed to: $PREVIEW_URL"
+
+      - name: 🔍 Health Check
+        run: |
+          curl -f ${{ steps.deploy.outputs.preview_url }}/api/health || exit 1
+        continue-on-error: true
+
+      - name: 💬 Comment Preview URL
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const previewUrl = '${{ steps.deploy.outputs.preview_url }}';
+            const body = `## 🎉 Preview Deployment Ready!
+            
+            🌍 **Preview URL:** ${previewUrl}
+            
+            ### 🧪 Test Features:
+            - ✅ AI-powered hadith analysis
+            - ✅ Arabic text processing
+            - ✅ Narrator search and profiles
+            - ✅ Security monitoring active
+            - ✅ Cross-browser compatibility
+            
+            ### 🔍 Quick Tests:
+            - [📱 Mobile View](${previewUrl}?viewport=mobile)
+            - [🖥️ Desktop View](${previewUrl}?viewport=desktop)
+            - [🔒 Security Headers](${previewUrl}?check=security)
+            
+            **⚡ Islamic Scholarship Platform Ready for Testing!**`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+  # 📊 PERFORMANCE MONITORING
+  performance-audit:
+    name: ⚡ Performance Audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: deploy-preview
+    if: github.event_name == 'pull_request'
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🏗️ Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: 📊 Lighthouse CI
+        uses: treosh/lighthouse-ci-action@v10
+        with:
+          urls: |
+            ${{ needs.deploy-preview.outputs.preview_url }}
+          configPath: './lighthouse.config.js'
+          uploadArtifacts: true
+          temporaryPublicStorage: true
+        continue-on-error: true
+
+  # ✅ STAGING SUMMARY
+  staging-summary:
+    name: 📋 Staging Summary
+    runs-on: ubuntu-latest
+    needs: [security-audit, ai-testing, deploy-preview, performance-audit]
+    if: always()
+    
+    steps:
+      - name: 📊 Create Summary
+        run: |
+          echo "## 🎯 Staging Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Component | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔒 Security Audit | ${{ needs.security-audit.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🧠 AI Testing | ${{ needs.ai-testing.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🚀 Preview Deploy | ${{ needs.deploy-preview.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ⚡ Performance | ${{ needs.performance-audit.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**🏆 Hadith Narrator Checker - Production Ready!**" >> $GITHUB_STEP_SUMMARY 

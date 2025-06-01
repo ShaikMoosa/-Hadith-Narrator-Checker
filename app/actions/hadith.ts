@@ -546,13 +546,15 @@ export async function searchNarratorsWithFilters(
     }
 
     // Execute query with pagination
-    const { data, count, error } = await executeWithTimeout(
-      () => queryBuilder
+    const result = await executeWithTimeout(
+      async () => await queryBuilder
         .order('name_arabic')
         .range((page - 1) * limit, page * limit - 1),
       10000,
       'Narrator Search Query'
-    );
+    ) as { data: any[]; count: number; error: any };
+
+    const { data, count, error } = result;
 
     if (error) {
       throw createServerActionError(
@@ -640,8 +642,8 @@ export async function getNarratorOpinions(narratorId: string): Promise<ServerAct
       'Supabase Client Creation'
     );
 
-    const { data, error } = await executeWithTimeout(
-      () => supabase
+    const result = await executeWithTimeout(
+      async () => await supabase
         .from('opinion')
         .select(`
           *,
@@ -650,11 +652,13 @@ export async function getNarratorOpinions(narratorId: string): Promise<ServerAct
             credibility
           )
         `)
-        .eq('narrator_id', narratorId)
+        .eq('narrator_id', parseInt(narratorId))
         .order('created_at', { ascending: false }),
       8000,
       'Opinion Query'
-    );
+    ) as { data: any[]; error: any };
+
+    const { data, error } = result;
 
     if (error) {
       throw createServerActionError(

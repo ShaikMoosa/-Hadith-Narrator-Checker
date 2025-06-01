@@ -257,7 +257,7 @@ export async function findSimilarHadiths(
           text: search.query,
           similarity,
           source: 'user_search',
-          timestamp: search.searched_at
+          timestamp: search.searched_at || new Date().toISOString()
         });
       }
     }

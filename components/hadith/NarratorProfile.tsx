@@ -17,7 +17,7 @@ export default function NarratorProfile({ narrator, onClose }: NarratorProfilePr
     const loadOpinions = async () => {
       setLoadingOpinions(true)
       try {
-        const narratorOpinions = await fetchNarratorOpinions(narrator.id)
+        const narratorOpinions = await fetchNarratorOpinions(narrator.id.toString())
         setOpinions(narratorOpinions)
       } catch (error) {
         console.error('Error loading opinions:', error)

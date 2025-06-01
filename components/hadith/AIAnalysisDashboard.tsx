@@ -22,7 +22,8 @@ import {
   Loader2,
   RefreshCw,
   Wifi,
-  WifiOff
+  WifiOff,
+  CheckCircle
 } from 'lucide-react';
 import { getArabicNLPEngine, type ArabicTextAnalysis, type NarratorEntity } from '@/lib/ai/arabic-nlp';
 
@@ -597,37 +598,54 @@ export function AIAnalysisDashboard({ className }: AIAnalysisDashboardProps) {
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div>
-                    <p className="text-sm text-muted-foreground">Sentiment</p>
-                    <Badge variant={
-                      analysis.sentiment === 'positive' ? 'default' :
-                      analysis.sentiment === 'negative' ? 'destructive' :
-                      'secondary'
-                    }>
-                      {analysis.sentiment}
+                    <p className="text-sm text-muted-foreground">Language</p>
+                    <Badge variant="default">
+                      {analysis.language}
                     </Badge>
                   </div>
                   <div>
-                    <p className="text-sm text-muted-foreground">Readability Score</p>
-                    <p className="font-medium">{analysis.readabilityScore}/100</p>
+                    <p className="text-sm text-muted-foreground">Processing Time</p>
+                    <p className="font-medium">{analysis.processingTime.toFixed(2)}ms</p>
                   </div>
                   <div>
                     <p className="text-sm text-muted-foreground">Word Count</p>
-                    <p className="font-medium">{analysis.originalText.split(/\s+/).length} words</p>
+                    <p className="font-medium">{analysis.wordCount} words</p>
                   </div>
                 </CardContent>
               </Card>
 
               <Card>
                 <CardHeader>
-                  <CardTitle>Key Terms</CardTitle>
+                  <CardTitle>Analysis Status</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="flex flex-wrap gap-2">
-                    {analysis.keyTerms.map((term, index) => (
-                      <Badge key={index} variant="outline" dir="rtl">
-                        {term}
-                      </Badge>
-                    ))}
+                  <div className="space-y-2">
+                    {analysis.errors.length > 0 && (
+                      <div>
+                        <p className="text-sm text-muted-foreground text-red-600">Errors</p>
+                        {analysis.errors.map((error, index) => (
+                          <Badge key={index} variant="destructive" className="mr-1">
+                            {error}
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
+                    {analysis.warnings.length > 0 && (
+                      <div>
+                        <p className="text-sm text-muted-foreground text-orange-600">Warnings</p>
+                        {analysis.warnings.map((warning, index) => (
+                          <Badge key={index} variant="outline" className="mr-1">
+                            {warning}
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
+                    {analysis.errors.length === 0 && analysis.warnings.length === 0 && (
+                      <div className="text-center py-4 text-muted-foreground">
+                        <CheckCircle className="h-8 w-8 mx-auto mb-2 text-green-500" />
+                        <p>Analysis completed successfully</p>
+                      </div>
+                    )}
                   </div>
                 </CardContent>
               </Card>
