@@ -87,6 +87,8 @@ export function AIAnalysisDashboard({ className }: AIAnalysisDashboardProps) {
     failedOperations: 0
   });
 
+  const [engineDiagnostics, setEngineDiagnostics] = useState<{ mode: 'pattern-only' | 'hybrid'; lastError?: string } | null>(null);
+
   // Network status monitoring
   const [isOnline, setIsOnline] = useState(navigator.onLine);
 
@@ -145,6 +147,7 @@ export function AIAnalysisDashboard({ className }: AIAnalysisDashboardProps) {
       }
 
       setInitializationProgress(10);
+      setEngineDiagnostics(null);
       console.log('[AI Dashboard] Initializing AI engine...');
       
       // Check prerequisites
@@ -159,6 +162,9 @@ export function AIAnalysisDashboard({ className }: AIAnalysisDashboardProps) {
       setInitializationProgress(30);
       
       const engine = await getArabicNLPEngine();
+      
+      const diagnostics = engine.getDiagnostics ? engine.getDiagnostics() : null;
+      setEngineDiagnostics(diagnostics);
       
       setInitializationProgress(80);
       
@@ -196,7 +202,9 @@ export function AIAnalysisDashboard({ className }: AIAnalysisDashboardProps) {
         retryCount: isRetry ? prev.retryCount + 1 : 0,
         lastError: new Date()
       }));
-      
+
+      setEngineDiagnostics({ mode: 'pattern-only', lastError: aiError.message });
+
       setInitializationProgress(0);
       updatePerformanceMetrics({ failedOperations: performanceMetrics.failedOperations + 1 });
     }
@@ -419,6 +427,15 @@ export function AIAnalysisDashboard({ className }: AIAnalysisDashboardProps) {
           </p>
         </div>
       </div>
+
+      {engineDiagnostics?.mode === 'pattern-only' && (
+        <Alert className="border-amber-500/60 bg-amber-50 text-amber-900">
+          <AlertDescription>
+            أنظمة الذكاء الاصطناعي تعمل حالياً في وضع التحليل التقليدي فقط.
+            {engineDiagnostics?.lastError && ` (${engineDiagnostics.lastError})`}
+          </AlertDescription>
+        </Alert>
+      )}
 
       {/* AI Engine Status */}
       {!aiEngineReady && (

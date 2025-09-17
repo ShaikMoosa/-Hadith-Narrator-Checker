@@ -132,6 +132,8 @@ class ArabicNLPEngine {
   private embeddingPipeline: any = null;
   private classificationPipeline: any = null;
   private initialized = false;
+  private initializationMode: 'pattern-only' | 'hybrid' = 'pattern-only';
+  private lastInitializationError?: string;
   private isBrowser = typeof window !== 'undefined';
   private performanceMetrics: AIPerformanceMetrics = {
     modelLoadTime: 0,
@@ -157,15 +159,27 @@ class ArabicNLPEngine {
     if (!this.isBrowser) {
       console.log('[AI] Server-side detected, using pattern-based analysis only');
       this.initialized = true;
+      this.initializationMode = 'pattern-only';
+      this.lastInitializationError = 'Server environment - using pattern-based analysis';
       return;
     }
 
-    // Check if already initialized globally
     if (globalModelCache.initialized && globalModelCache.embeddingPipeline) {
       console.log('[AI] Using globally cached models');
       this.embeddingPipeline = globalModelCache.embeddingPipeline;
       this.initialized = true;
       this.performanceMetrics.cacheHits++;
+      this.initializationMode = this.embeddingPipeline ? 'hybrid' : 'pattern-only';
+      this.lastInitializationError = undefined;
+      return;
+    }
+
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      console.warn('[AI] Offline mode detected, using pattern-based analysis only');
+      this.initialized = true;
+      this.initializationMode = 'pattern-only';
+      this.lastInitializationError = 'Offline mode detected';
+      this.performanceMetrics.errorCount++;
       return;
     }
 
@@ -173,35 +187,39 @@ class ArabicNLPEngine {
 
     try {
       console.log('[AI] Initializing Arabic NLP engine with performance optimization...');
-      
-      // Quick browser compatibility check (non-blocking)
+
       this.quickCompatibilityCheck();
-      
-      // Load transformers with timeout and caching
+
       const transformerResult = await this.executeWithTimeout(
         async () => await (window as any).__transformerLoader(),
-        8000, // Reduced timeout
+        8000,
         'Model loading timeout - using pattern-based analysis'
       );
 
       if (transformerResult?.pipeline) {
-        // Load only essential model with aggressive optimization
         await this.initializeOptimizedModels(transformerResult.pipeline);
         globalModelCache.initialized = true;
+        this.initializationMode = this.embeddingPipeline ? 'hybrid' : 'pattern-only';
+        this.lastInitializationError = undefined;
       } else {
         console.warn('[AI] Transformers not available, using pattern-based analysis only');
         this.initialized = true;
+        this.initializationMode = 'pattern-only';
+        this.lastInitializationError = 'Transformer loader unavailable';
+        this.performanceMetrics.errorCount++;
         return;
       }
 
       this.performanceMetrics.modelLoadTime = performance.now() - startTime;
       this.initialized = true;
-      
+
       console.log(`[AI] Arabic NLP engine initialized in ${this.performanceMetrics.modelLoadTime.toFixed(2)}ms`);
-      
+
     } catch (error) {
       console.warn('[AI] Initialization failed, falling back to pattern-based analysis:', error);
-      this.initialized = true; // Still mark as initialized for pattern-based fallback
+      this.initialized = true;
+      this.initializationMode = 'pattern-only';
+      this.lastInitializationError = error instanceof Error ? error.message : 'Unknown initialization error';
       this.performanceMetrics.errorCount++;
     }
   }
@@ -380,43 +398,67 @@ class ArabicNLPEngine {
   /**
    * Fast pattern-based narrator extraction with optimized regex
    */
-  async extractNarratorsUsingPatterns(text: string): Promise<NarratorEntity[]> {
-    const results: NarratorEntity[] = [];
-    
-    // Optimized patterns for common narrator introductions
-    const patterns = [
-      // Primary patterns (most common)
-      { regex: /حدثنا\s+([^،\s]+(?:\s+[^،\s]+){0,3})/g, confidence: 0.9 },
-      { regex: /أخبرنا\s+([^،\s]+(?:\s+[^،\s]+){0,3})/g, confidence: 0.85 },
-      { regex: /حدثني\s+([^،\s]+(?:\s+[^،\s]+){0,3})/g, confidence: 0.85 },
-      
-      // Secondary patterns
-      { regex: /عن\s+([^،\s]+(?:\s+[^،\s]+){0,2})/g, confidence: 0.7 },
-      { regex: /قال\s+([^،\s]+(?:\s+[^،\s]+){0,2})/g, confidence: 0.6 },
-      
-      // Specific narrator patterns
-      { regex: /(أبو\s+[^،\s]+(?:\s+[^،\s]+){0,2})/g, confidence: 0.8 },
-      { regex: /(ابن\s+[^،\s]+(?:\s+[^،\s]+){0,2})/g, confidence: 0.75 },
-      { regex: /(عبد\s+الله\s+[^،\s]+)/g, confidence: 0.8 },
-      { regex: /(عبد\s+الرحمن\s+[^،\s]+)/g, confidence: 0.8 }
+    async extractNarratorsUsingPatterns(text: string): Promise<NarratorEntity[]> {
+    const markerConfigurations = [
+      { marker: 'حدثنا', confidence: 0.9 },
+      { marker: 'حدّثنا', confidence: 0.9 },
+      { marker: 'أخبرنا', confidence: 0.9 },
+      { marker: 'اخبرنا', confidence: 0.85 },
+      { marker: 'حدثني', confidence: 0.85 },
+      { marker: 'حدّثني', confidence: 0.85 },
+      { marker: 'قال', confidence: 0.7 },
+      { marker: 'عن', confidence: 0.6 },
+      { marker: 'سمع', confidence: 0.6 },
+      { marker: 'سمعت', confidence: 0.6 },
     ];
 
-    // Process patterns efficiently
-    for (const { regex, confidence } of patterns) {
-      let match;
-      const regexCopy = new RegExp(regex.source, regex.flags);
-      
-      while ((match = regexCopy.exec(text)) !== null) {
-        const name = match[1]?.trim();
-        if (name && name.length > 2 && name.length < 50) {
+    const results: NarratorEntity[] = [];
+    const seen = new Set<string>();
+
+    for (const { marker, confidence } of markerConfigurations) {
+      const pattern = new RegExp(`(?:^|\s)${marker}\s+([\p{Script=Arabic}\s]{2,60})`, 'gu');
+      let match: RegExpExecArray | null;
+
+      while ((match = pattern.exec(text)) !== null) {
+        const rawName = match[1]
+          .split(/[،؛.]/)[0]
+          .replace(/\s{2,}/g, ' ')
+          .trim();
+
+        if (rawName.length > 1 && rawName.length < 80 && !seen.has(rawName)) {
+          seen.add(rawName);
+          const tokens = rawName.split(/\s+/).length;
+          const adjustedConfidence = Math.min(confidence + tokens * 0.02, 0.99);
+
           results.push({
-            name,
-            confidence,
+            name: rawName,
+            confidence: Number(adjustedConfidence.toFixed(2)),
             startPosition: match.index,
-            endPosition: match.index + match[0].length,
-            type: this.classifyNarratorType(name)
+            endPosition: match.index + rawName.length,
+            type: this.classifyNarratorType(rawName)
           });
         }
+      }
+    }
+
+    const lineagePattern = new RegExp(`(?:أبو|أبي|ابو|ابن|بن|بنت)\s+[\p{Script=Arabic}]{2,40}`, 'gu');
+    let fallbackMatch: RegExpExecArray | null;
+
+    while ((fallbackMatch = lineagePattern.exec(text)) !== null) {
+      const candidate = fallbackMatch[0]
+        .split(/[،؛.]/)[0]
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+
+      if (candidate.length > 1 && !seen.has(candidate)) {
+        seen.add(candidate);
+        results.push({
+          name: candidate,
+          confidence: 0.65,
+          startPosition: fallbackMatch.index,
+          endPosition: fallbackMatch.index + candidate.length,
+          type: this.classifyNarratorType(candidate)
+        });
       }
     }
 
@@ -453,7 +495,7 @@ class ArabicNLPEngine {
                 pooling: 'mean',
                 normalize: true
               });
-              return Array.from(output.data);
+              return Array.from(output.data as number[]);
             },
             5000, // 5 second timeout
             'Embedding generation timeout'
@@ -701,6 +743,8 @@ class ArabicNLPEngine {
     
     // Set initialized to true to allow pattern-based fallback
     this.initialized = true;
+    this.initializationMode = 'pattern-only';
+    this.lastInitializationError = error instanceof Error ? error.message : 'Unknown initialization error';
     this.performanceMetrics.errorCount++;
     
     // Store error for monitoring
@@ -736,6 +780,17 @@ class ArabicNLPEngine {
   }
 
   /**
+   * Get current diagnostics for UI feedback
+   */
+  getDiagnostics(): { mode: 'pattern-only' | 'hybrid'; lastError?: string; performance: AIPerformanceMetrics } {
+    return {
+      mode: this.initializationMode,
+      lastError: this.lastInitializationError,
+      performance: { ...this.performanceMetrics }
+    };
+  }
+
+  /**
    * Get current performance metrics
    */
   getPerformanceMetrics(): AIPerformanceMetrics {
@@ -764,18 +819,22 @@ class ArabicNLPEngine {
    * Classify narrator type based on name patterns
    */
   private classifyNarratorType(name: string): NarratorEntity['type'] {
-    const companions = ['أبو بكر', 'عمر', 'عثمان', 'علي', 'عائشة', 'فاطمة', 'أنس', 'أبو هريرة'];
-    const scholarPatterns = ['الإمام', 'الشيخ', 'العلامة', 'الفقيه', 'المحدث'];
-    
-    if (companions.some(comp => name.includes(comp))) {
+    const companions = ['أبو بكر', 'عمر', 'عثمان', 'علي', 'أبو هريرة', 'أنس', 'عبد الله بن مسعود', 'عبد الله بن عباس'];
+    const scholarPatterns = ['الذهبي', 'ابن حجر', 'النووي', 'العجلي', 'الباقلاني'];
+
+    if (companions.some(companion => name.includes(companion))) {
       return 'companion';
     }
-    
+
     if (scholarPatterns.some(pattern => name.includes(pattern))) {
       return 'scholar';
     }
-    
-    return 'narrator';
+
+    if (name.includes('ابن') || name.includes('بن')) {
+      return 'narrator';
+    }
+
+    return 'uncertain';
   }
 
   /**

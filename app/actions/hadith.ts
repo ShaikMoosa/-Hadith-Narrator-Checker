@@ -220,15 +220,12 @@ interface EnhancedNarratorData {
  */
 function normalizeArabicText(text: string): string {
   return text
-    // Remove diacritics (تشكيل)
-    .replace(/[\u064B-\u065F\u0670\u0640]/g, '')
-    // Normalize Alef variants
-    .replace(/[أإآ]/g, 'ا')
-    // Normalize Teh Marbuta
+    .replace(/[ً-ٰٟۖ-ۭ]/g, '')
+    .replace(/[إأٱآ]/g, 'ا')
     .replace(/ة/g, 'ه')
-    // Normalize Yeh variants
-    .replace(/[ىي]/g, 'ي')
-    // Remove extra whitespace
+    .replace(/ى/g, 'ي')
+    .replace(/ؤ/g, 'و')
+    .replace(/ئ/g, 'ي')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -238,24 +235,30 @@ function normalizeArabicText(text: string): string {
  */
 function extractNarratorsFromText(text: string): Array<{ name: string; confidence: number; position: number }> {
   const results: Array<{ name: string; confidence: number; position: number }> = [];
-  
-  // Enhanced Arabic narrator patterns
+  const seen = new Set<string>();
+
   const narratorPatterns = [
-    { pattern: /حدثنا\s+([^،.؛]+)/g, confidence: 0.9 },           // "narrated to us"
-    { pattern: /أخبرنا\s+([^،.؛]+)/g, confidence: 0.9 },          // "informed us"
-    { pattern: /حدثني\s+([^،.؛]+)/g, confidence: 0.85 },          // "narrated to me"
-    { pattern: /قال\s+([^،.؛]+)/g, confidence: 0.7 },            // "said"
-    { pattern: /عن\s+([^،.؛]+)/g, confidence: 0.6 },             // "from/about"
-    { pattern: /بن\s+([^،.؛]+)/g, confidence: 0.75 },            // "son of"
-    { pattern: /أبو\s+([^،.؛]+)/g, confidence: 0.8 },            // "father of"
+    { pattern: /(?:^|\s)(?:حدثتنا|حدّثتنا)\s+([\p{Script=Arabic}\s]{2,48})/gu, confidence: 0.9 },
+    { pattern: /(?:^|\s)(?:أخبرنا|اخبرنا)\s+([\p{Script=Arabic}\s]{2,48})/gu, confidence: 0.9 },
+    { pattern: /(?:^|\s)(?:حدثني|حدّثني)\s+([\p{Script=Arabic}\s]{2,48})/gu, confidence: 0.85 },
+    { pattern: /(?:^|\s)(?:قال)\s+([\p{Script=Arabic}\s]{2,48})/gu, confidence: 0.7 },
+    { pattern: /(?:^|\s)(?:سمع|سمعت|عن)\s+([\p{Script=Arabic}\s]{2,48})/gu, confidence: 0.6 },
+    { pattern: /(?:^|\s)(?:بن|ابن|بنت)\s+([\p{Script=Arabic}\s]{2,48})/gu, confidence: 0.75 },
+    { pattern: /(?:^|\s)(?:أبو|أبي|ابو)\s+([\p{Script=Arabic}\s]{2,48})/gu, confidence: 0.8 }
   ];
 
   for (const { pattern, confidence } of narratorPatterns) {
-    let match;
-    const tempPattern = new RegExp(pattern.source, pattern.flags);
-    while ((match = tempPattern.exec(text)) !== null) {
-      const name = match[1].trim();
-      if (name.length > 2 && name.length < 50) {
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(text)) !== null) {
+      const candidate = match[1]
+        .split(/[??.]/)[0]
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+
+      const name = candidate.replace(/^(?:و)?(?:قال|عن|سمع|سمعت)\s+/u, '').trim();
+
+      if (name.length > 1 && name.length < 60 && !seen.has(name)) {
+        seen.add(name);
         results.push({
           name,
           confidence,
@@ -267,6 +270,7 @@ function extractNarratorsFromText(text: string): Array<{ name: string; confidenc
 
   return results;
 }
+
 
 /**
  * Process hadith text with comprehensive error handling and monitoring

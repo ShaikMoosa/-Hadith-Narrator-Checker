@@ -38,6 +38,75 @@ export type Database = {
           },
         ]
       }
+      bulk_processing_job: {
+        Row: {
+          job_id: string
+          user_id: string
+          status: string
+          processed: number
+          total: number
+          current_text: string | null
+          error: string | null
+          results: Json | null
+          created_at: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          job_id: string
+          user_id: string
+          status?: string
+          processed?: number
+          total?: number
+          current_text?: string | null
+          error?: string | null
+          results?: Json | null
+          created_at?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          job_id?: string
+          user_id?: string
+          status?: string
+          processed?: number
+          total?: number
+          current_text?: string | null
+          error?: string | null
+          results?: Json | null
+          created_at?: string | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      user_profile: {
+        Row: {
+          user_id: string
+          email: string
+          full_name: string | null
+          avatar_url: string | null
+          last_login: string | null
+          created_at: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          user_id: string
+          email: string
+          full_name?: string | null
+          avatar_url?: string | null
+          last_login?: string | null
+          created_at?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          user_id?: string
+          email?: string
+          full_name?: string | null
+          avatar_url?: string | null
+          last_login?: string | null
+          created_at?: string | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       narrator: {
         Row: {
           biography: string | null

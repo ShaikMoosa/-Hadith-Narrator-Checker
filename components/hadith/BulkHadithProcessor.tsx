@@ -174,31 +174,44 @@ export default function BulkHadithProcessor({
   }
 
   // Export results
-  const handleExport = async (format: 'json' | 'csv') => {
+  const handleExport = async (format: 'json' | 'csv' | 'pdf') => {
     try {
       const response = await exportAnalysisResults(results, format)
-      
+
       if (response.success && response.data) {
-        // Create and download file
-        const blob = new Blob([response.data], { 
-          type: format === 'json' ? 'application/json' : 'text/csv' 
-        })
+        let blob: Blob
+        const filename = response.filename ?? `hadith-analysis-${Date.now()}.${format}`
+
+        if (format === 'pdf') {
+          const byteCharacters = atob(response.data)
+          const byteNumbers = new Array(byteCharacters.length)
+          for (let i = 0; i < byteCharacters.length; i++) {
+            byteNumbers[i] = byteCharacters.charCodeAt(i)
+          }
+          const byteArray = new Uint8Array(byteNumbers)
+          blob = new Blob([byteArray], { type: response.contentType ?? 'application/pdf' })
+        } else {
+          blob = new Blob([response.data], {
+            type: response.contentType ?? (format === 'json' ? 'application/json' : 'text/csv')
+          })
+        }
+
         const url = URL.createObjectURL(blob)
         const a = document.createElement('a')
         a.href = url
-        a.download = `hadith-analysis-${Date.now()}.${format}`
+        a.download = filename
         document.body.appendChild(a)
         a.click()
         document.body.removeChild(a)
         URL.revokeObjectURL(url)
-        
+
         console.log(`[INFO] Exported ${results.length} results to ${format}`)
       } else {
         throw new Error(response.error || 'Export failed')
       }
     } catch (error) {
       console.error('[ERROR] Export failed:', error)
-      setError(error instanceof Error ? error.message : 'Export failed')
+      setError(error instanceof Error ? error.message : 'Failed to export results')
     }
   }
 
@@ -447,6 +460,14 @@ export default function BulkHadithProcessor({
                     >
                       <Download className="h-4 w-4 mr-1" />
                       Export CSV
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleExport('pdf')}
+                    >
+                      <Download className="h-4 w-4 mr-1" />
+                      Export PDF
                     </Button>
                   </div>
                 )}
